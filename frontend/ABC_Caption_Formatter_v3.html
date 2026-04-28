@@ -360,8 +360,8 @@ let stage2Suggestions    = [];             // Result from /api/refine
 let stage2Accepted       = new Set();      // Caption indices user accepted
 let stage2Status         = 'idle';         // idle | uploading | processing | done | error
 let stage2Error          = null;           // Error message if failed
-const API_BASE_URL       = 'http://localhost:3000'; // Updated to point to local proxy
-const API_SECRET         = 'abc-captions-2026'; // Updated to match SHARED_SECRET
+const API_BASE_URL       = 'https://abc-captions.onrender.com'; // Point to live Render proxy
+const API_SECRET         = 'abc-captions-2026'; // Must match Render SHARED_SECRET
 
 // ── UTILITIES ─────────────────────────────────────────────────────────────────
 
