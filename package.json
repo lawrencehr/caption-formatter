@@ -1,0 +1,15 @@
+{
+  "name": "abc-caption-proxy",
+  "version": "1.0.0",
+  "description": "Proxy server for ABC Caption Formatter",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

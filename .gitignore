@@ -1,0 +1,12 @@
+# Node
+node_modules/
+backend/node_modules/
+
+# Python
+whisperx-server/venv/
+__pycache__/
+*.py[cod]
+
+# OS
+.DS_Store
+Thumbs.db

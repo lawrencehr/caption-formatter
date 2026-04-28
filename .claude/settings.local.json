@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import sys; print\\('Python path:', sys.executable\\)\")",
+      "Bash(nvidia-smi)",
+      "PowerShell(nvidia-smi 2>&1)",
+      "Bash(ffmpeg -version)"
+    ]
+  }
+}

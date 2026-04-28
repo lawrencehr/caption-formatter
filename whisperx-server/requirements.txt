@@ -1,0 +1,8 @@
+# NOTE: torch and torchaudio are installed separately in start.bat
+# with --index-url https://download.pytorch.org/whl/cpu
+# Do NOT add them here or pip will download the full CUDA build (~2GB)
+
+whisperx
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-dotenv==1.0.0
