@@ -159,18 +159,25 @@ PRIORITISE:
 - Caption breaks that fall mid-phrase or mid-thought when the audio has a natural pause elsewhere
 - Captions that combine end-of-one-thought + start-of-another (should split)
 
+CRITICAL RULES FOR MOVING TEXT:
+1. If you move words from one caption to another, you MUST return an update for BOTH captions to prevent duplicating text!
+2. For example, if you move the word "retailers" from caption 90 to 89:
+   - Return an update for 89 adding the word.
+   - Return an update for 90 removing the word (set new_text to "" if the caption becomes empty).
+3. DO NOT DUPLICATE WORDS across captions.
+
 DO NOT CHANGE:
 - The actual words spoken (no rewriting, only adjusting where breaks fall)
 - Italic markers
+- Visual attributions, names, or dates at the end of captions (e.g. "- Email, ACCC Spokesperson, 20 Apr 2026") MUST BE KEPT EXACTLY AS THEY ARE, even if they are not spoken in the audio!
 - The overall sequence of captions (don't reorder)
-- Captions that already work well
 
 OUTPUT FORMAT:
 Return ONLY a JSON array. No preamble. No markdown. If no changes needed, return [].
 For each change, specify:
 - caption_index: the 1-based index from the input
-- new_text: the suggested replacement text (or null if just timing change)
-- change_type: "phrase_break" | "name_kept_together" | "timing_only" | "split" | "merge"
+- new_text: the suggested replacement text (or "" if deleted)
+- change_type: "phrase_break" | "name_kept_together" | "timing_only" | "split" | "merge" | "delete"
 - reason: 1-sentence explanation
 
 INPUT CAPTIONS:
@@ -247,14 +254,19 @@ ${JSON.stringify(captions.map(c => ({
 
     // ── Step 2: Build suggested captions for WhisperX ──────────────────────────
     const suggestionsMap = new Map(suggestions.map(s => [s.caption_index, s]));
-    const textForAlignment = captions.map(cap => ({
-      index: cap.index,
-      text: suggestionsMap.has(cap.index) && suggestionsMap.get(cap.index).new_text
-        ? suggestionsMap.get(cap.index).new_text
-        : cap.text,
-      start_ms: cap.start_ms,  // pass original SRT timing for forced alignment
-      end_ms: cap.end_ms,
-    }));
+    const textForAlignment = captions.map(cap => {
+      const suggestion = suggestionsMap.get(cap.index);
+      // If new_text is strictly empty string, we keep it as empty so WhisperX ignores it
+      const newText = suggestion && suggestion.new_text !== null && suggestion.new_text !== undefined ? suggestion.new_text : cap.text;
+      return {
+        index: cap.index,
+        text: newText,
+        // Widen the timing window by 3 seconds in both directions so WhisperX can find words that were moved
+        start_ms: cap.start_ms !== null ? Math.max(0, cap.start_ms - 3000) : null,
+        end_ms: cap.end_ms !== null ? cap.end_ms + 3000 : null
+      };
+    }).filter(c => c.text.trim().length > 0); // Don't send empty captions to WhisperX
+
 
     // ── Step 3: WhisperX force-alignment ─────────────────────────────────────
     console.log('[/api/refine] Step 2: Calling WhisperX for timing alignment...');
