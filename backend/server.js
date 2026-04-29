@@ -199,18 +199,32 @@ ${JSON.stringify(captions.map(c => ({
         generationConfig: { temperature: 0.2 }
       };
 
-      const geminiResponse = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(geminiBody) }
-      );
-
-      if (!geminiResponse.ok) {
-        const geminiError = await geminiResponse.json();
-        console.error('Gemini error:', geminiError);
-        return res.status(500).json({ status: 'error', error: `Gemini API error: ${geminiResponse.statusText}` });
+      // Try gemini-2.5-flash first, fall back to gemini-2.0-flash on 503
+      const geminiModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+      let geminiResponse, geminiData;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const model = attempt < 2 ? geminiModels[0] : geminiModels[1];
+        if (attempt > 0) {
+          const delay = attempt < 2 ? 3000 : 0; // 3s between 2.5-flash retries, immediate for fallback
+          if (delay) await new Promise(r => setTimeout(r, delay));
+          console.log(`[/api/refine] Gemini retry ${attempt} using ${model}...`);
+        }
+        geminiResponse = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(geminiBody) }
+        );
+        if (geminiResponse.ok) break;
+        const errBody = await geminiResponse.json();
+        console.error(`Gemini ${model} attempt ${attempt} failed: ${errBody?.error?.status}`);
+        if (errBody?.error?.status !== 'UNAVAILABLE' && errBody?.error?.status !== 'RESOURCE_EXHAUSTED') {
+          return res.status(500).json({ status: 'error', error: `Gemini API error: ${errBody?.error?.message || geminiResponse.statusText}` });
+        }
+        if (attempt === 3) {
+          return res.status(503).json({ status: 'error', error: 'Gemini is overloaded — please try again in a minute.' });
+        }
       }
 
-      const geminiData = await geminiResponse.json();
+      geminiData = await geminiResponse.json();
 
       let suggestions = [];
       try {
