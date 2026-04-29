@@ -149,6 +149,12 @@ app.post('/api/refine', async (req, res) => {
       console.log(`[/api/refine] Phase 1: Gemini for ${captions.length} captions, audio: ${audioBuffer.length} bytes`);
       const geminiStartTime = Date.now();
 
+      // Start keepAlive immediately — Gemini can take 2-4 mins for long audio
+      // and Render cuts connections at 100s without any bytes written.
+      res.setHeader('Content-Type', 'application/json');
+      res.flushHeaders();
+      keepAlive = setInterval(() => res.write(' '), 10000);
+
       const geminiPrompt = `You are an expert caption editor for ABC Media Watch social media videos.
 You will receive audio and a list of captions that have been auto-formatted from a Premiere Pro export.
 
@@ -286,7 +292,9 @@ ${JSON.stringify(captions.map(c => {
       stages.gemini = { duration_ms: Date.now() - geminiStartTime, suggestions_count: suggestions.length };
       console.log(`[/api/refine] Phase 1 complete: ${suggestions.length} suggestions in ${Date.now() - startTime}ms`);
 
-      return res.json({ status: 'suggestions', stages, suggestions });
+      clearInterval(keepAlive);
+      res.write(JSON.stringify({ status: 'suggestions', stages, suggestions }));
+      return res.end();
     }
 
     // ── PHASE 2: WhisperX alignment with user-accepted suggestions ────────────
