@@ -181,13 +181,35 @@ For each change, specify:
 - change_type: "phrase_break" | "name_kept_together" | "timing_only" | "split" | "merge" | "delete"
 - reason: 1-sentence explanation
 
+LINE LENGTH RULE:
+Each caption is displayed on up to 2 lines, max 30 characters per line (60 total for normal captions).
+Captions with a speaker name tag (e.g. "JOHN SMITH:") always use the first line for the name tag, leaving only the second line for spoken text.
+For these, effective_max_chars = 60 - length of the name tag line.
+If a caption has line_too_long: true, the current text overflows — you MUST suggest a redistribution of words with neighbouring captions so the spoken text fits within effective_max_chars total characters.
+Write new_text as a flat string with NO line breaks — the formatter will split it automatically.
+
 INPUT CAPTIONS:
-${JSON.stringify(captions.map(c => ({
-  index: c.index,
-  text: c.text,
-  italic: c.italic,
-  timing_flag: c.timingFlag || null
-})), null, 2)}`;
+${JSON.stringify(captions.map(c => {
+  const NAME_TAG_RE = /^([A-Z][A-Z\s.\-']{1,40}:)/;
+  const lines = c.text ? c.text.split('\n') : [];
+  const nameTagMatch = lines[0] && NAME_TAG_RE.test(lines[0].trim());
+  const nameTagLen = nameTagMatch ? lines[0].trim().length : 0;
+  const effectiveMax = nameTagMatch ? 60 - nameTagLen : 60;
+  // Check if any spoken line (skip name tag line) exceeds 30 chars
+  const spokenLines = nameTagMatch ? lines.slice(1) : lines;
+  const lineTooLong = spokenLines.some(l => l.trim().length > 30);
+  const entry = {
+    index: c.index,
+    text: c.text,
+    italic: c.italic,
+    timing_flag: c.timingFlag || null,
+  };
+  if (lineTooLong) {
+    entry.line_too_long = true;
+    entry.effective_max_chars = effectiveMax;
+  }
+  return entry;
+}), null, 2)}`;
 
       const geminiBody = {
         contents: [{
