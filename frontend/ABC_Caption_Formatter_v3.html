@@ -110,6 +110,17 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
+/* ── STAGE 2 ─────────────────────────────────────────────────────────── */
+.diff-row { display: grid; grid-template-columns: 32px 80px 1fr; border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 12px; }
+.diff-row:hover { background: var(--surface2); }
+.diff-chk { padding: 9px 6px; border-right: 1px solid var(--border); background: var(--surface); display: flex; align-items: flex-start; justify-content: center; }
+.diff-chk input[type=checkbox] { accent-color: var(--accent); cursor: pointer; margin-top: 3px; }
+.diff-meta { padding: 9px 10px; color: var(--muted); font-size: 10px; border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; justify-content: flex-start; line-height: 1.6; }
+.diff-body { padding: 9px 16px; line-height: 1.7; }
+.diff-before { color: #c04040; text-decoration: line-through; opacity: 0.8; white-space: pre-wrap; }
+.diff-after { color: var(--accent); white-space: pre-wrap; margin-top: 4px; }
+.diff-tag { display: inline-block; padding: 1px 5px; border-radius: 2px; font-size: 9px; background: var(--accent-dim); color: var(--accent); margin-top: 3px; }
+
 /* ── EASTER EGG ──────────────────────────────────────────────────────── */
 #easter-egg {
   display: none;
@@ -295,53 +306,62 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 </div>
 
 <!-- ── STAGE 2: REFINE WITH AI ─────────────────────────────────────────────── -->
-<div id="stage2-section" style="display:none; margin-top:2rem; padding:1rem; border:1px solid #ddd; border-radius:4px; background:#f9f9f9;">
-  <h3 style="margin-top:0;">STAGE 2: REFINE WITH AI (optional)</h3>
+<div id="stage2-section" style="display:none; border-top: 1px solid var(--border);">
 
-  <div id="stage2-upload" style="margin-bottom:1rem;">
-    <p style="margin:0 0 0.5rem 0; font-size:0.9rem; color:#666;">Drop MP3 audio or click to browse:</p>
-    <div id="audio-drop" style="border:2px dashed #ccc; padding:2rem; text-align:center; border-radius:4px; cursor:pointer; background:#fafafa; transition:all 0.2s;">
-      <div style="font-size:1.1rem; color:#333; margin-bottom:0.5rem;">📁 Audio File</div>
-      <div style="font-size:0.85rem; color:#999;">MP3, WAV, or M4A (≤100MB)</div>
+  <!-- Audio upload row — mirrors Stage 1 .inputs structure -->
+  <div style="display:grid; grid-template-columns:1fr 1fr; border-bottom:1px solid var(--border);">
+    <div class="input-col" style="border-right:1px solid var(--border);">
+      <div class="col-label"><div class="dot" id="dot3"></div>Step 3 — Drop audio (MP3 / WAV / M4A)</div>
+      <div class="drop-zone" id="audio-drop" onclick="document.getElementById('audio-file').click()">
+        <div class="drop-icon" id="audio-icon">↑</div>
+        <div id="audio-label">Drop audio here or click</div>
+        <div class="sub-hint">MP3, WAV or M4A · max 100 MB</div>
+      </div>
       <input type="file" id="audio-file" accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4" style="display:none;">
+      <div class="col-status" id="audio-status">No file loaded</div>
     </div>
-    <div id="audio-filename" style="margin-top:0.5rem; font-size:0.9rem; color:#666;"></div>
-  </div>
-
-  <button id="btn-refine" disabled style="padding:0.6rem 1.2rem; font-size:1rem; background:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer; transition:all 0.2s; opacity:0.5;">
-    Refine captions →
-  </button>
-
-  <!-- Progress bar (hidden initially) -->
-  <div id="stage2-progress" style="display:none; margin-top:1rem;">
-    <div style="font-size:0.9rem; margin-bottom:0.5rem; color:#666;" id="progress-text">Processing...</div>
-    <div style="width:100%; height:8px; background:#eee; border-radius:4px; overflow:hidden;">
-      <div id="progress-bar" style="height:100%; width:0%; background:#4CAF50; transition:width 0.3s;"></div>
+    <div class="input-col">
+      <div class="col-label">STAGE 2 — REFINE WITH AI <em style="font-style:normal; color:var(--muted); font-size:9px; margin-left:4px;">optional</em></div>
+      <p style="font-family:var(--mono); font-size:10px; color:var(--muted); line-height:1.8; margin-top:6px;">Gemini reviews captions against audio and suggests better phrase breaks. WhisperX re-aligns timing for changes you accept.</p>
     </div>
   </div>
 
-  <!-- Diff view (hidden initially) -->
-  <div id="stage2-diff" style="display:none; margin-top:1rem;">
-    <div style="margin-bottom:1rem;">
-      <button id="accept-all" style="padding:0.4rem 0.8rem; margin-right:0.5rem; background:#4CAF50; color:white; border:none; border-radius:3px; cursor:pointer; font-size:0.9rem;">✓ Accept all</button>
-      <button id="reject-all" style="padding:0.4rem 0.8rem; background:#f44336; color:white; border:none; border-radius:3px; cursor:pointer; font-size:0.9rem;">✗ Reject all</button>
-      <span id="suggestion-count" style="margin-left:1rem; color:#666; font-size:0.9rem;"></span>
+  <!-- Action bar -->
+  <div class="action-bar">
+    <button class="btn-run" id="btn-refine" disabled>Get AI suggestions →</button>
+    <div class="action-note" id="stage2-note">Load audio to begin</div>
+  </div>
+
+  <!-- Progress (inline, no bar) -->
+  <div id="stage2-progress" style="display:none; padding:10px 22px; border-bottom:1px solid var(--border); background:var(--surface); font-family:var(--mono); font-size:10px; color:var(--muted);">
+    <span id="progress-text">Processing...</span>
+  </div>
+
+  <!-- Error -->
+  <div id="stage2-error" style="display:none; padding:10px 22px; border-bottom:1px solid var(--border); font-family:var(--mono); font-size:11px; color:var(--warn); background:#1a0a00;"></div>
+
+  <!-- Diff view -->
+  <div id="stage2-diff" style="display:none;">
+    <div class="output-bar">
+      <div class="output-stats">
+        <span class="pill pill-g" id="suggestion-count"></span>
+        <span style="font-family:var(--mono); font-size:10px; color:var(--muted);">· uncheck to reject before downloading</span>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn-dl" id="accept-all">✓ Accept all</button>
+        <button class="btn-dl" id="reject-all" style="color:var(--warn);border-color:var(--warn);">✗ Reject all</button>
+      </div>
     </div>
-    <div id="diff-container" style="max-height:400px; overflow-y:auto; border:1px solid #ddd; border-radius:4px; background:white;"></div>
+    <div id="diff-container" class="caption-scroll" style="max-height:360px;"></div>
   </div>
 
-  <!-- Download button (hidden initially) -->
-  <div id="stage2-download" style="display:none; margin-top:1rem;">
-    <button id="btn-download-refined" style="padding:0.6rem 1.2rem; font-size:1rem; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer; margin-right:0.5rem;">
-      ⬇ Download refined SRT
-    </button>
-    <button id="btn-skip-refinement" style="padding:0.6rem 1.2rem; font-size:1rem; background:#999; color:white; border:none; border-radius:4px; cursor:pointer;">
-      Skip refinement
-    </button>
+  <!-- Download / skip bar -->
+  <div id="stage2-download" style="display:none;" class="action-bar">
+    <button class="btn-run" id="btn-download-refined">↓ Download refined SRT</button>
+    <button class="btn-dl" id="btn-skip-refinement" style="margin-left:6px;">Skip</button>
+    <div class="action-note" id="stage2-download-note"></div>
   </div>
 
-  <!-- Error message (hidden initially) -->
-  <div id="stage2-error" style="display:none; margin-top:1rem; padding:0.8rem; background:#ffebee; color:#c62828; border-radius:4px; border-left:4px solid #c62828;"></div>
 </div>
 
 <script>
@@ -355,11 +375,11 @@ let srtFileName     = '';
 let transcriptReady = false;
 
 // ── STAGE 2 STATE ──────────────────────────────────────────────────────────────
-let stage2Audio          = null;           // ArrayBuffer of MP3
-let stage2Suggestions    = [];             // Result from /api/refine
-let stage2Accepted       = new Set();      // Caption indices user accepted
-let stage2Status         = 'idle';         // idle | uploading | processing | done | error
-let stage2Error          = null;           // Error message if failed
+let stage2Audio             = null;   // File object
+let stage2OriginalCaptions  = [];     // Captions sent to Phase 1 (stored for Phase 2)
+let stage2Suggestions       = [];     // Raw Gemini suggestions from Phase 1
+let stage2Accepted          = new Set(); // caption_index values user accepted
+let stage2Status            = 'idle'; // idle | suggesting | done | error
 const API_BASE_URL       = 'https://abc-captions.onrender.com'; // Point to live Render proxy
 const API_SECRET         = 'abc-captions-2026'; // Must match Render SHARED_SECRET
 
@@ -935,29 +955,16 @@ updateState();
 const audioDrop = document.getElementById('audio-drop');
 const audioFileInput = document.getElementById('audio-file');
 
-// Audio drop zone
-audioDrop.addEventListener('click', () => audioFileInput.click());
-audioDrop.addEventListener('dragover', e => {
-  e.preventDefault();
-  audioDrop.style.background = '#f0f0f0';
-  audioDrop.style.borderColor = '#4CAF50';
-});
-audioDrop.addEventListener('dragleave', () => {
-  audioDrop.style.background = '#fafafa';
-  audioDrop.style.borderColor = '#ccc';
-});
+audioDrop.addEventListener('dragover', e => { e.preventDefault(); audioDrop.classList.add('over'); });
+audioDrop.addEventListener('dragleave', () => audioDrop.classList.remove('over'));
 audioDrop.addEventListener('drop', e => {
-  e.preventDefault();
-  audioDrop.style.background = '#fafafa';
-  audioDrop.style.borderColor = '#ccc';
+  e.preventDefault(); audioDrop.classList.remove('over');
   if (e.dataTransfer.files[0]) handleAudioFile(e.dataTransfer.files[0]);
 });
-
 audioFileInput.addEventListener('change', () => {
   if (audioFileInput.files[0]) handleAudioFile(audioFileInput.files[0]);
 });
 
-// Handle audio file selection
 function handleAudioFile(file) {
   if (!/audio\/(mpeg|wav|mp4)|\.m4a/i.test(file.type) && !/\.(mp3|wav|m4a)$/i.test(file.name)) {
     alert('Please select an MP3, WAV, or M4A file');
@@ -968,28 +975,30 @@ function handleAudioFile(file) {
     return;
   }
   stage2Audio = file;
-  document.getElementById('audio-filename').textContent = `✓ ${file.name} (${(file.size / 1024 / 1024).toFixed(1)}MB)`;
+  audioDrop.classList.add('filled');
+  document.getElementById('audio-icon').textContent = '✓';
+  document.getElementById('audio-label').textContent = file.name;
+  const st = document.getElementById('audio-status');
+  st.textContent = '✓ ' + file.name + ' (' + (file.size / 1024 / 1024).toFixed(1) + ' MB)';
+  st.className = 'col-status ok';
+  document.getElementById('dot3').classList.add('on');
   document.getElementById('btn-refine').disabled = false;
+  document.getElementById('stage2-note').textContent = 'Ready · click to get AI suggestions';
 }
 
-// Refine button
 document.getElementById('btn-refine').addEventListener('click', () => refineWithAI());
 
-// Accept all / Reject all buttons
 document.getElementById('accept-all').addEventListener('click', () => {
   document.querySelectorAll('.diff-checkbox').forEach(cb => cb.checked = true);
   updateAcceptedSet();
 });
-
 document.getElementById('reject-all').addEventListener('click', () => {
   document.querySelectorAll('.diff-checkbox').forEach(cb => cb.checked = false);
   updateAcceptedSet();
 });
 
-// Download refined SRT
 document.getElementById('btn-download-refined').addEventListener('click', () => downloadRefinedSRT());
 
-// Skip refinement
 document.getElementById('btn-skip-refinement').addEventListener('click', () => {
   stage2Status = 'idle';
   stage2Suggestions = [];
@@ -998,141 +1007,125 @@ document.getElementById('btn-skip-refinement').addEventListener('click', () => {
 });
 
 // ── STAGE 2: FUNCTIONS ─────────────────────────────────────────────────────────
+
+// Phase 1: call Gemini only, render diff view for user review
 async function refineWithAI() {
   if (!stage2Audio) return;
 
-  stage2Status = 'uploading';
   document.getElementById('btn-refine').disabled = true;
   document.getElementById('stage2-progress').style.display = 'block';
   document.getElementById('stage2-diff').style.display = 'none';
   document.getElementById('stage2-download').style.display = 'none';
   document.getElementById('stage2-error').style.display = 'none';
+  document.getElementById('progress-text').textContent = 'Sending audio to Gemini for review...';
+
+  // Build captions payload (store for Phase 2 reuse)
+  stage2OriginalCaptions = result.map((c, idx) => ({
+    index: c.index || idx + 1,
+    text: (c.lines || []).join(' ') || c.text || '',
+    italic: c.italic || false,
+    timingFlag: c.timingFlag || null,
+    start_ms: c.start,
+    end_ms: c.end
+  }));
 
   try {
-    // Read audio file as base64
-    const audioBase64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(stage2Audio);
-    });
-
-    updateProgress('Uploading audio...', 20);
-
-    // Prepare captions JSON
-    const captionsForAPI = result.map(c => ({
-      index: c.index || result.indexOf(c) + 1,
-      text: c.lines?.join(' ') || c.text,
-      italic: c.italic || false,
-      timingFlag: c.timingFlag || null,
-      start_ms: c.start,
-      end_ms: c.end
-    }));
-
-    updateProgress('Sending to Gemini...', 40);
-
-    // Call /api/refine endpoint
     const formData = new FormData();
     formData.append('audio', stage2Audio);
-    formData.append('captions', JSON.stringify(captionsForAPI));
+    formData.append('captions', JSON.stringify(stage2OriginalCaptions));
+    // No accepted_suggestions field → server runs Phase 1
 
-    const response = await fetch(`${API_BASE_URL}/api/refine`, {
+    const response = await fetch(API_BASE_URL + '/api/refine', {
       method: 'POST',
-      headers: {
-        'X-Secret': API_SECRET
-      },
+      headers: { 'X-Secret': API_SECRET },
       body: formData
     });
 
-    updateProgress('Processing captions...', 70);
-
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || `API error: ${response.statusText}`);
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || 'API error ' + response.status);
     }
 
     const data = await response.json();
-    stage2Suggestions = data.captions || [];
-    stage2Status = 'done';
+    if (data.status !== 'suggestions') {
+      throw new Error(data.error || 'Unexpected response from server');
+    }
 
-    updateProgress('Rendering diff view...', 90);
+    stage2Suggestions = data.suggestions || [];
+    stage2Status = 'suggestions';
 
-    // Render diff view
     renderDiffView();
     document.getElementById('stage2-diff').style.display = 'block';
     document.getElementById('stage2-download').style.display = 'block';
     document.getElementById('stage2-progress').style.display = 'none';
-
-    if (data.error) {
-      showStage2Error(`Note: ${data.error}`);
-    }
+    document.getElementById('stage2-note').textContent =
+      stage2Suggestions.length + ' suggestion' + (stage2Suggestions.length !== 1 ? 's' : '') + ' — review and download below';
 
   } catch (err) {
-    console.error('Stage 2 error:', err);
+    console.error('Stage 2 Phase 1 error:', err);
     stage2Status = 'error';
-    stage2Error = err.message;
-    showStage2Error(err.message);
+    showStage2Error('Gemini error: ' + err.message);
+    document.getElementById('stage2-progress').style.display = 'none';
   } finally {
     document.getElementById('btn-refine').disabled = false;
-    document.getElementById('stage2-progress').style.display = 'none';
   }
 }
 
-function updateProgress(text, percent) {
+function updateProgress(text) {
   document.getElementById('progress-text').textContent = text;
-  document.getElementById('progress-bar').style.width = percent + '%';
 }
 
 function renderDiffView() {
-  const changed = stage2Suggestions.filter(s => s.changed).length;
-  document.getElementById('suggestion-count').textContent = `${changed} suggested improvement${changed !== 1 ? 's' : ''}`;
+  const count = stage2Suggestions.length;
+  const pill = document.getElementById('suggestion-count');
+  pill.textContent = count + ' suggestion' + (count !== 1 ? 's' : '');
 
   const container = document.getElementById('diff-container');
   container.innerHTML = '';
+  stage2Accepted.clear();
 
-  stage2Suggestions.forEach(cap => {
-    if (!cap.changed) return;
+  if (count === 0) {
+    container.innerHTML = '<div style="padding:32px;font-family:var(--mono);font-size:11px;color:var(--muted);text-align:center;">No changes suggested — captions look good!</div>';
+    return;
+  }
 
-    const item = document.createElement('div');
-    item.style.padding = '0.8rem';
-    item.style.borderBottom = '1px solid #eee';
-    item.style.display = 'flex';
-    item.style.gap = '1rem';
+  stage2Suggestions.forEach(sug => {
+    const originalCap = stage2OriginalCaptions.find(c => c.index === sug.caption_index);
+    if (!originalCap) return;
 
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.checked = true;
-    checkbox.className = 'diff-checkbox';
-    checkbox.dataset.index = cap.index;
-    checkbox.style.marginTop = '0.2rem';
-    checkbox.style.cursor = 'pointer';
-    checkbox.addEventListener('change', updateAcceptedSet);
-    stage2Accepted.add(cap.index);
+    stage2Accepted.add(sug.caption_index); // default all accepted
 
-    const content = document.createElement('div');
-    content.style.flex = '1';
+    const row = document.createElement('div');
+    row.className = 'diff-row';
 
-    const header = document.createElement('div');
-    header.style.fontSize = '0.9rem';
-    header.style.marginBottom = '0.5rem';
-    header.style.color = '#666';
-    header.innerHTML = `<strong>Caption ${cap.index}</strong> · ${formatTime(cap.start_ms)} · <span style="background:#e8f5e9;padding:0.1rem 0.4rem;border-radius:2px;font-size:0.8rem;">${cap.change_type || 'changed'}</span>`;
+    // Checkbox column
+    const chkCol = document.createElement('div');
+    chkCol.className = 'diff-chk';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.className = 'diff-checkbox';
+    cb.dataset.index = sug.caption_index;
+    cb.addEventListener('change', updateAcceptedSet);
+    chkCol.appendChild(cb);
 
-    const before = document.createElement('div');
-    before.style.marginBottom = '0.4rem';
-    before.innerHTML = `<div style="color:#d32f2f;text-decoration:line-through;font-size:0.9rem;">- ${escapeHtml(cap.original_text)}</div>`;
+    // Meta column
+    const metaCol = document.createElement('div');
+    metaCol.className = 'diff-meta';
+    const timeStr = formatTime(originalCap.start_ms || 0);
+    metaCol.innerHTML = '#' + sug.caption_index + '<br>' + timeStr + '<br><span class="diff-tag">' + esc(sug.change_type || 'change') + '</span>';
 
-    const after = document.createElement('div');
-    after.style.marginBottom = '0.4rem';
-    after.innerHTML = `<div style="color:#388e3c;font-size:0.9rem;">+ ${escapeHtml(cap.text)}</div>`;
+    // Body column
+    const bodyCol = document.createElement('div');
+    bodyCol.className = 'diff-body';
+    bodyCol.innerHTML =
+      '<div class="diff-before">- ' + esc(originalCap.text) + '</div>' +
+      '<div class="diff-after">+ ' + esc(sug.new_text || '') + '</div>';
 
-    content.appendChild(header);
-    content.appendChild(before);
-    content.appendChild(after);
-
-    item.appendChild(checkbox);
-    item.appendChild(content);
-    container.appendChild(item);
+    row.appendChild(chkCol);
+    row.appendChild(metaCol);
+    row.appendChild(bodyCol);
+    container.appendChild(row);
   });
 }
 
@@ -1143,47 +1136,93 @@ function updateAcceptedSet() {
   });
 }
 
-function downloadRefinedSRT() {
-  // Build final captions combining Stage 1 and Stage 2
-  const finalCaptions = result.map((cap, idx) => {
-    const stage2Cap = stage2Suggestions.find(s => s.index === (cap.index || idx + 1));
-    if (stage2Cap && stage2Accepted.has(cap.index || idx + 1)) {
-      // Use Stage 2 text and timing, but keep Stage 1 italic flag
-      return {
-        ...cap,
-        lines: stage2Cap.text.split('\n'),
-        start: stage2Cap.start_ms,
-        end: stage2Cap.end_ms
-      };
+// Phase 2: send accepted suggestions to WhisperX, then download
+async function downloadRefinedSRT() {
+  if (!stage2Audio || stage2OriginalCaptions.length === 0) return;
+
+  const btn = document.getElementById('btn-download-refined');
+  btn.disabled = true;
+  btn.textContent = '⟳ Aligning timing...';
+  document.getElementById('stage2-progress').style.display = 'block';
+  document.getElementById('stage2-error').style.display = 'none';
+  document.getElementById('stage2-download-note').textContent = '';
+
+  const accepted = stage2Suggestions.filter(s => stage2Accepted.has(s.caption_index));
+
+  try {
+    document.getElementById('progress-text').textContent =
+      'Aligning ' + accepted.length + ' accepted change' + (accepted.length !== 1 ? 's' : '') + ' with audio...';
+
+    const formData = new FormData();
+    formData.append('audio', stage2Audio);
+    formData.append('captions', JSON.stringify(stage2OriginalCaptions));
+    formData.append('accepted_suggestions', JSON.stringify(accepted));
+
+    const response = await fetch(API_BASE_URL + '/api/refine', {
+      method: 'POST',
+      headers: { 'X-Secret': API_SECRET },
+      body: formData
+    });
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || 'API error ' + response.status);
     }
-    return cap;
-  });
 
-  const srtContent = writeSRT(finalCaptions);
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([srtContent], { type: 'text/plain' }));
-  link.download = srtFileName.replace(/\.srt$/i, '_refined.srt');
-  link.click();
+    const data = await response.json();
+    if (data.status === 'error') throw new Error(data.error || 'Refinement failed');
 
-  // Reset Stage 2
-  stage2Status = 'idle';
-  stage2Suggestions = [];
-  stage2Accepted.clear();
-  document.getElementById('stage2-section').style.display = 'none';
+    // Convert API captions to writeSRT format (uses result[] for original italic/lines fallback)
+    const finalCaptions = data.captions.map(c => {
+      const orig = result.find((r, i) => (r.index || i + 1) === c.index) || {};
+      return {
+        ...orig,
+        lines: (c.text || '').split('\n').filter(l => l.trim()).length
+          ? (c.text || '').split('\n').filter(l => l.trim())
+          : [c.text || ''],
+        italic: c.italic,
+        start: c.start_ms,
+        end: c.end_ms,
+      };
+    });
+
+    const srtContent = writeSRT(finalCaptions);
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([srtContent], { type: 'text/plain' }));
+    link.download = srtFileName.replace(/\.srt$/i, '_refined.srt');
+    link.click();
+
+    const noteEl = document.getElementById('stage2-download-note');
+    noteEl.textContent = data.status === 'partial'
+      ? 'Downloaded (note: ' + (data.error || 'partial — WhisperX unavailable') + ')'
+      : 'Downloaded!';
+
+    if (data.error) showStage2Error('Note: ' + data.error);
+
+  } catch (err) {
+    console.error('Stage 2 Phase 2 error:', err);
+    showStage2Error('Download error: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↓ Download refined SRT';
+    document.getElementById('stage2-progress').style.display = 'none';
+  }
+  // Intentionally NOT hiding stage2-section so user can download again or try different settings
 }
 
 function showStage2Error(msg) {
-  const err = document.getElementById('stage2-error');
-  err.textContent = msg;
-  err.style.display = 'block';
+  const el = document.getElementById('stage2-error');
+  el.textContent = msg;
+  el.style.display = 'block';
 }
 
 function formatTime(ms) {
+  ms = Math.max(0, ms);
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60);
   const ss = s % 60;
   const mmm = ms % 1000;
-  return `${m.toString().padStart(2,'0')}:${ss.toString().padStart(2,'0')},${mmm.toString().padStart(3,'0')}`;
+  return m.toString().padStart(2,'0') + ':' + ss.toString().padStart(2,'0') + ',' + mmm.toString().padStart(3,'0');
 }
 
 function escapeHtml(text) {
@@ -1196,15 +1235,23 @@ function showStage2() {
   document.getElementById('stage2-section').style.display = 'block';
   stage2Audio = null;
   stage2Suggestions = [];
+  stage2OriginalCaptions = [];
   stage2Accepted.clear();
   stage2Status = 'idle';
-  stage2Error = null;
+  const ad = document.getElementById('audio-drop');
+  ad.classList.remove('filled', 'over');
+  document.getElementById('audio-icon').textContent = '↑';
+  document.getElementById('audio-label').textContent = 'Drop audio here or click';
+  document.getElementById('audio-status').textContent = 'No file loaded';
+  document.getElementById('audio-status').className = 'col-status';
+  document.getElementById('dot3').classList.remove('on');
+  document.getElementById('btn-refine').disabled = true;
+  document.getElementById('stage2-note').textContent = 'Load audio to begin';
   document.getElementById('stage2-progress').style.display = 'none';
   document.getElementById('stage2-diff').style.display = 'none';
   document.getElementById('stage2-download').style.display = 'none';
   document.getElementById('stage2-error').style.display = 'none';
-  document.getElementById('audio-filename').textContent = '';
-  document.getElementById('btn-refine').disabled = true;
+  document.getElementById('stage2-download-note').textContent = '';
 }
 
 // ── EASTER EGG ───────────────────────────────────────────────────────────────

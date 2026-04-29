@@ -106,13 +106,16 @@ No preamble. No markdown. Raw JSON array only.`;
   }
 });
 
-// ── Stage 2: Gemini caption refinement + WhisperX timing alignment ──────────────
+// ── Stage 2: Two-phase caption refinement ────────────────────────────────────
+// Phase 1 (no accepted_suggestions): Gemini only → returns suggestions for user review
+// Phase 2 (accepted_suggestions present): WhisperX only → returns merged captions
 app.post('/api/refine', async (req, res) => {
   const startTime = Date.now();
   const stages = {};
+  let keepAlive;
 
   try {
-    // Validate inputs
+    // ── Common validation ──────────────────────────────────────────────────────
     if (!req.files || !req.files.audio) {
       return res.status(400).json({ error: 'audio file is required' });
     }
@@ -141,14 +144,12 @@ app.post('/api/refine', async (req, res) => {
       return res.status(413).json({ error: 'Audio file exceeds 100MB limit' });
     }
 
-    console.log(`[/api/refine] Processing ${captions.length} captions, audio size: ${audioBuffer.length} bytes`);
+    // ── PHASE 1: Gemini suggestions only ──────────────────────────────────────
+    if (!req.body.accepted_suggestions) {
+      console.log(`[/api/refine] Phase 1: Gemini for ${captions.length} captions, audio: ${audioBuffer.length} bytes`);
+      const geminiStartTime = Date.now();
 
-
-    // ── Step 1: Gemini caption refinement ──────────────────────────────────────
-    console.log('[/api/refine] Step 1: Calling Gemini for caption suggestions...');
-    const geminiStartTime = Date.now();
-
-    const geminiPrompt = `You are an expert caption editor for ABC Media Watch social media videos.
+      const geminiPrompt = `You are an expert caption editor for ABC Media Watch social media videos.
 You will receive audio and a list of captions that have been auto-formatted from a Premiere Pro export.
 
 Your job: review the captions against what is actually said in the audio, and suggest improvements where caption breaks fall in awkward places.
@@ -188,129 +189,92 @@ ${JSON.stringify(captions.map(c => ({
   timing_flag: c.timingFlag || null
 })), null, 2)}`;
 
-    const geminiBody = {
-      contents: [{
-        parts: [
-          {
-            inline_data: {
-              mime_type: audioFormat === 'mp3' ? 'audio/mpeg' : `audio/${audioFormat}`,
-              data: audioBase64
-            }
-          },
-          { text: geminiPrompt }
-        ]
-      }],
-      generationConfig: { temperature: 0.2 }
-    };
+      const geminiBody = {
+        contents: [{
+          parts: [
+            { inline_data: { mime_type: audioFormat === 'mp3' ? 'audio/mpeg' : `audio/${audioFormat}`, data: audioBase64 } },
+            { text: geminiPrompt }
+          ]
+        }],
+        generationConfig: { temperature: 0.2 }
+      };
 
-    const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(geminiBody),
-        timeout: 120000
+      const geminiResponse = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(geminiBody) }
+      );
+
+      if (!geminiResponse.ok) {
+        const geminiError = await geminiResponse.json();
+        console.error('Gemini error:', geminiError);
+        return res.status(500).json({ status: 'error', error: `Gemini API error: ${geminiResponse.statusText}` });
       }
-    );
 
-    if (!geminiResponse.ok) {
-      console.error(`Gemini error: ${geminiResponse.status} ${geminiResponse.statusText}`);
-      const geminiError = await geminiResponse.json();
-      console.error('Gemini error details:', geminiError);
-      return res.status(500).json({
-        status: 'error',
-        error: `Gemini API error: ${geminiResponse.statusText}`,
-        captions: captions // Return original captions on error
-      });
+      const geminiData = await geminiResponse.json();
+
+      let suggestions = [];
+      try {
+        const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        console.log('Gemini response (first 500 chars):', responseText.substring(0, 500));
+        const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+        suggestions = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(responseText);
+      } catch (e) {
+        console.warn(`Could not parse Gemini suggestions: ${e.message}`);
+        suggestions = [];
+      }
+
+      stages.gemini = { duration_ms: Date.now() - geminiStartTime, suggestions_count: suggestions.length };
+      console.log(`[/api/refine] Phase 1 complete: ${suggestions.length} suggestions in ${Date.now() - startTime}ms`);
+
+      return res.json({ status: 'suggestions', stages, suggestions });
     }
 
-    const geminiData = await geminiResponse.json();
-    stages.gemini = {
-      duration_ms: Date.now() - geminiStartTime,
-      suggestions_count: 0
-    };
-
-    // Extract JSON from Gemini response
-    let suggestions = [];
+    // ── PHASE 2: WhisperX alignment with user-accepted suggestions ────────────
+    let acceptedSuggestions;
     try {
-      const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      console.log('Gemini response (first 500 chars):', responseText.substring(0, 500));
-
-      // Try to extract JSON from the response
-      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        suggestions = JSON.parse(jsonMatch[0]);
-      } else {
-        // If response is already JSON
-        suggestions = JSON.parse(responseText);
-      }
+      acceptedSuggestions = JSON.parse(req.body.accepted_suggestions);
     } catch (e) {
-      console.warn(`Could not parse Gemini suggestions as JSON: ${e.message}`);
-      suggestions = []; // Fall back to no changes
+      return res.status(400).json({ error: `Invalid accepted_suggestions JSON: ${e.message}` });
     }
+    if (!Array.isArray(acceptedSuggestions)) acceptedSuggestions = [];
 
-    stages.gemini.suggestions_count = suggestions.length;
-    console.log(`[/api/refine] Gemini returned ${suggestions.length} suggestions`);
+    console.log(`[/api/refine] Phase 2: WhisperX for ${captions.length} captions, ${acceptedSuggestions.length} accepted changes`);
 
-    // ── Step 2: Build suggested captions for WhisperX ──────────────────────────
-    const suggestionsMap = new Map(suggestions.map(s => [s.caption_index, s]));
+    // Build textForAlignment using only the accepted suggestions
+    const suggestionsMap = new Map(acceptedSuggestions.map(s => [s.caption_index, s]));
     const textForAlignment = captions.map(cap => {
       const suggestion = suggestionsMap.get(cap.index);
-      // If new_text is strictly empty string, we keep it as empty so WhisperX ignores it
       const newText = suggestion && suggestion.new_text !== null && suggestion.new_text !== undefined ? suggestion.new_text : cap.text;
-      
-      // ONLY widen the timing window if Gemini changed this caption.
-      // If unchanged, keep exact original bounds to prevent WhisperX from mistakenly snapping to nearby noise.
       const startMs = cap.start_ms !== null ? (suggestion ? Math.max(0, cap.start_ms - 3000) : cap.start_ms) : null;
       const endMs = cap.end_ms !== null ? (suggestion ? cap.end_ms + 3000 : cap.end_ms) : null;
-      
-      return {
-        index: cap.index,
-        text: newText,
-        start_ms: startMs,
-        end_ms: endMs
-      };
-    }).filter(c => c.text.trim().length > 0); // Don't send empty captions to WhisperX
-
-
-    // ── Step 3: WhisperX force-alignment ─────────────────────────────────────
-    console.log('[/api/refine] Step 2: Calling WhisperX for timing alignment...');
-    const whisperxStartTime = Date.now();
+      return { index: cap.index, text: newText, start_ms: startMs, end_ms: endMs };
+    }).filter(c => c.text && c.text.trim().length > 0);
 
     const whisperxURL = process.env.WHISPERX_URL;
     if (!whisperxURL) {
-      console.warn('WHISPERX_URL not configured, skipping alignment');
-      stages.whisperx = { duration_ms: 0, status: 'skipped' };
-      // Fall back to Gemini suggestions with original timing
-      const fallbackResult = _mergeCaptionSuggestions(
-        captions,
-        suggestions,
-        captions, // Use original timing
-        true // partial flag
-      );
+      console.warn('WHISPERX_URL not configured, returning accepted text with original timing');
+      const fallbackResult = _mergeCaptionSuggestions(captions, acceptedSuggestions, captions, true);
       return res.json({
         status: 'partial',
-        error: 'WhisperX not configured',
+        error: 'WhisperX not configured — using accepted text with original timing',
         stages,
         captions: fallbackResult
       });
     }
 
-    let whisperxResult = null;
-    let whisperxError = null;
-
-    // Start sending spaces to frontend to avert Render 100s timeout
+    // Start keepAlive to prevent Render 100s timeout during WhisperX
     res.setHeader('Content-Type', 'application/json');
     res.flushHeaders();
-    const keepAlive = setInterval(() => res.write(' '), 10000);
+    keepAlive = setInterval(() => res.write(' '), 10000);
+
+    let whisperxResult = null;
+    let whisperxError = null;
+    const whisperxStartTime = Date.now();
 
     try {
       const whisperxResponse = await fetch(`${whisperxURL}/align`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Secret': process.env.SHARED_SECRET
-        },
+        headers: { 'Content-Type': 'application/json', 'X-Secret': process.env.SHARED_SECRET },
         body: JSON.stringify({
           audio_base64: audioBase64,
           audio_format: audioFormat,
@@ -338,16 +302,15 @@ ${JSON.stringify(captions.map(c => ({
       error: whisperxError
     };
 
-    // ── Step 4: Merge results ────────────────────────────────────────────────
     const timingFromWhisperX = whisperxResult ? whisperxResult.captions : captions;
     const mergedCaptions = _mergeCaptionSuggestions(
       captions,
-      suggestions,
+      acceptedSuggestions,
       timingFromWhisperX,
-      !!whisperxError // partial if WhisperX failed
+      !!whisperxError
     );
 
-    console.log(`[/api/refine] Pipeline complete in ${Date.now() - startTime}ms`);
+    console.log(`[/api/refine] Phase 2 complete in ${Date.now() - startTime}ms`);
 
     clearInterval(keepAlive);
     res.write(JSON.stringify({
@@ -359,13 +322,10 @@ ${JSON.stringify(captions.map(c => ({
     return res.end();
 
   } catch (err) {
-    if (typeof keepAlive !== 'undefined') clearInterval(keepAlive);
+    if (keepAlive) clearInterval(keepAlive);
     console.error('[/api/refine] Unexpected error:', err);
     if (!res.headersSent) res.setHeader('Content-Type', 'application/json');
-    res.write(JSON.stringify({
-      status: 'error',
-      error: `Refinement pipeline error: ${err.message}`
-    }));
+    res.write(JSON.stringify({ status: 'error', error: `Refinement pipeline error: ${err.message}` }));
     return res.end();
   }
 });
