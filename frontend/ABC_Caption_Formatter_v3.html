@@ -1177,9 +1177,7 @@ async function downloadRefinedSRT() {
       const orig = result.find((r, i) => (r.index || i + 1) === c.index) || {};
       return {
         ...orig,
-        lines: (c.text || '').split('\n').filter(l => l.trim()).length
-          ? (c.text || '').split('\n').filter(l => l.trim())
-          : [c.text || ''],
+        lines: splitLines(c.text || ''),
         italic: c.italic,
         start: c.start_ms,
         end: c.end_ms,

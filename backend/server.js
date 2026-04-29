@@ -342,39 +342,75 @@ ${JSON.stringify(captions.map(c => ({
   }
 });
 
-// Helper: Merge Gemini suggestions + italic flags + WhisperX timing
+// Helper: Merge accepted suggestions + WhisperX timing into original captions
+// Rules:
+//  - Italic ALWAYS comes from the original caption (Stage 1)
+//  - Text comes from the accepted suggestion if present, else original
+//  - Timing comes from WhisperX ONLY for changed captions; unchanged captions keep
+//    their original Stage-1 timing so we don't break the back-to-back caption flow
+//  - Captions whose suggestion sets new_text="" (delete intent) are dropped
+//  - Survivors are renumbered sequentially starting from 1
 function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions, isPartial) {
   const suggestionsMap = new Map(suggestions.map(s => [s.caption_index, s]));
   const timingMap = new Map(timingCaptions.map(t => [t.index, t]));
 
-  return originalCaptions.map(cap => {
+  const merged = originalCaptions.map(cap => {
     const suggestion = suggestionsMap.get(cap.index);
-    let timingData = timingMap.get(cap.index);
+    const isChanged = !!suggestion;
+    const newText = isChanged && suggestion.new_text !== null && suggestion.new_text !== undefined
+      ? suggestion.new_text
+      : cap.text;
 
-    // If WhisperX alignment failed for a widened caption, it falls back to the widened bounds!
-    // We must detect this and revert to the original precise bounds instead.
-    if (timingData && suggestion && cap.start_ms !== null && cap.end_ms !== null) {
-      const widenedStart = Math.max(0, cap.start_ms - 3000);
-      const widenedEnd = cap.end_ms + 3000;
-      if (timingData.start_ms === widenedStart && timingData.end_ms === widenedEnd) {
-        timingData.start_ms = cap.start_ms;
-        timingData.end_ms = cap.end_ms;
+    // Timing: only use WhisperX result for CHANGED captions.
+    // Unchanged captions keep original timing so the SRT stays back-to-back.
+    let startMs = cap.start_ms;
+    let endMs = cap.end_ms;
+    if (isChanged) {
+      const timingData = timingMap.get(cap.index);
+      if (timingData) {
+        const widenedStart = cap.start_ms !== null ? Math.max(0, cap.start_ms - 3000) : null;
+        const widenedEnd = cap.end_ms !== null ? cap.end_ms + 3000 : null;
+        // If WhisperX hit the widened bounds, alignment failed for this caption — revert to original
+        if (widenedStart !== null && timingData.start_ms === widenedStart && timingData.end_ms === widenedEnd) {
+          startMs = cap.start_ms;
+          endMs = cap.end_ms;
+        } else {
+          startMs = timingData.start_ms;
+          endMs = timingData.end_ms;
+        }
       }
     }
 
     return {
       index: cap.index,
-      text: suggestion && suggestion.new_text !== null && suggestion.new_text !== undefined ? suggestion.new_text : cap.text,
-      italic: cap.italic, // ALWAYS from original — never modified
-      start_ms: timingData ? timingData.start_ms : cap.start_ms,
-      end_ms: timingData ? timingData.end_ms : cap.end_ms,
-      changed: !!suggestion,
-      change_type: suggestion ? suggestion.change_type : null,
+      text: newText,
+      italic: cap.italic,
+      start_ms: startMs,
+      end_ms: endMs,
+      changed: isChanged,
+      change_type: isChanged ? suggestion.change_type : null,
       original_text: cap.text,
       timing_flag: cap.timingFlag || null,
       partial: isPartial
     };
   });
+
+  // Drop captions whose accepted suggestion deleted them (empty new_text)
+  const surviving = merged.filter(c => c.text && c.text.trim().length > 0);
+
+  // Sort by start time and clamp any overlaps caused by WhisperX shifts
+  surviving.sort((a, b) => (a.start_ms || 0) - (b.start_ms || 0));
+  for (let i = 1; i < surviving.length; i++) {
+    if (surviving[i].start_ms < surviving[i - 1].end_ms) {
+      surviving[i].start_ms = surviving[i - 1].end_ms;
+    }
+    if (surviving[i].end_ms <= surviving[i].start_ms) {
+      surviving[i].end_ms = surviving[i].start_ms + 500; // minimum 0.5s
+    }
+  }
+
+  // Renumber sequentially (so SRT indices are 1..N consecutively)
+  return surviving.map((c, i) => ({ ...c, index: i + 1 }));
 }
 
 app.get('/', (req, res) => res.send('ABC Caption Proxy — OK'));
