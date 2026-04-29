@@ -1172,12 +1172,18 @@ async function downloadRefinedSRT() {
     const data = await response.json();
     if (data.status === 'error') throw new Error(data.error || 'Refinement failed');
 
-    // Convert API captions to writeSRT format (uses result[] for original italic/lines fallback)
+    // Convert API captions to writeSRT format.
+    // Unchanged captions reuse their Stage 1 line split (already correct).
+    // Changed captions run splitLines() on the new Gemini text.
     const finalCaptions = data.captions.map(c => {
-      const orig = result.find((r, i) => (r.index || i + 1) === c.index) || {};
+      const orig = stage2OriginalCaptions.find(r => r.index === c.index) || {};
+      const origResult = result.find((r, i) => (r.index || i + 1) === c.index) || {};
+      const lines = c.changed
+        ? splitLines(c.text || '')
+        : (origResult.lines && origResult.lines.length ? origResult.lines : splitLines(c.text || ''));
       return {
-        ...orig,
-        lines: splitLines(c.text || ''),
+        ...origResult,
+        lines,
         italic: c.italic,
         start: c.start_ms,
         end: c.end_ms,
