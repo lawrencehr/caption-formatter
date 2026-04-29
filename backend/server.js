@@ -166,6 +166,21 @@ CRITICAL RULES FOR MOVING TEXT:
    - Return an update for 89 adding the word.
    - Return an update for 90 removing the word (set new_text to "" if the caption becomes empty).
 3. DO NOT DUPLICATE WORDS across captions.
+4. CHAIN COMPLETENESS: when you shift text forward (or backward) through a sequence of captions, EVERY caption in the chain must have an update. If caption N's new_text consumes words from N+1, then N+1 MUST also have an update — either with its new (shifted) text, or with new_text="" if it becomes empty. Never leave the last caption in a chain untouched while its text has been absorbed elsewhere — that creates a duplicate.
+   Worked example — original captions:
+     #75 "its existing copper,"
+     #76 "zinc, and lead"
+     #77 "mine, MMG plans to bulldoze"
+     #78 "hundreds of hectares of the Tarkine,"
+     #79 "for a new gigantic tailings dam of toxic sludge."
+   If you redistribute as:
+     #75 → "LIAM BARTLETT: … to expand its existing"
+     #76 → "copper, zinc, and lead mine, MMG plans to"
+     #77 → "bulldoze hundreds of hectares of the Tarkine,"
+   then you MUST also include:
+     #78 → "for a new gigantic tailings dam of toxic sludge."  (its words got pushed forward)
+     #79 → ""  (empty because all its words were consumed)
+   Otherwise #78 will keep "hundreds of hectares of the Tarkine," and duplicate #77's tail.
 
 NAME TAG RULE:
 A speaker name tag (e.g. "LIAM BARTLETT:", "CHRIS BOWEN:") MUST always remain as the FIRST LINE of its own caption.
@@ -295,23 +310,76 @@ ${JSON.stringify(captions.map(c => {
     const BOUNDARY_BUFFER_MS = 300;
     const alignmentWindows = new Map(); // capIndex → { windowStart, windowEnd }
 
-    const textForAlignment = captions.map((cap, i) => {
+    // Resolve final text per caption (treats null/empty/delete as empty)
+    const resolveText = (cap, suggestion) => {
+      if (!suggestion) return cap.text;
+      const isDelete = suggestion.change_type === 'delete' ||
+        suggestion.new_text === null ||
+        suggestion.new_text === undefined ||
+        (typeof suggestion.new_text === 'string' && suggestion.new_text.trim() === '');
+      return isDelete ? '' : suggestion.new_text;
+    };
+
+    // Group consecutive changed captions into chains so we can split their
+    // shared outer window into proportional sub-windows. Without this, three
+    // adjacent changed captions all get the same window and WhisperX collapses
+    // them into 0.5s micro-captions.
+    const chainStart = new Array(captions.length).fill(-1);
+    let i = 0;
+    while (i < captions.length) {
+      if (!isChangedSet.has(captions[i].index)) { i++; continue; }
+      const start = i;
+      while (i < captions.length && isChangedSet.has(captions[i].index)) {
+        chainStart[i] = start;
+        i++;
+      }
+    }
+
+    const textForAlignment = captions.map((cap, idx) => {
       const suggestion = suggestionsMap.get(cap.index);
-      const newText = suggestion && suggestion.new_text !== null && suggestion.new_text !== undefined
-        ? suggestion.new_text : cap.text;
+      const newText = resolveText(cap, suggestion);
 
       let startMs = cap.start_ms;
       let endMs = cap.end_ms;
       if (suggestion) {
+        const chainHead = chainStart[idx];
+        // Find outer window: nearest unchanged neighbours on either side of the chain
         let leftMs = null, rightMs = null;
-        for (let j = i - 1; j >= 0; j--) {
+        for (let j = chainHead - 1; j >= 0; j--) {
           if (!isChangedSet.has(captions[j].index)) { leftMs = captions[j].end_ms; break; }
         }
-        for (let j = i + 1; j < captions.length; j++) {
+        let chainEnd = chainHead;
+        while (chainEnd + 1 < captions.length && chainStart[chainEnd + 1] === chainHead) chainEnd++;
+        for (let j = chainEnd + 1; j < captions.length; j++) {
           if (!isChangedSet.has(captions[j].index)) { rightMs = captions[j].start_ms; break; }
         }
-        startMs = Math.max(0, leftMs !== null ? leftMs - BOUNDARY_BUFFER_MS : (cap.start_ms || 0) - 1000);
-        endMs = rightMs !== null ? rightMs + BOUNDARY_BUFFER_MS : (cap.end_ms || 0) + 1000;
+        const outerStart = Math.max(0, leftMs !== null ? leftMs - BOUNDARY_BUFFER_MS : (captions[chainHead].start_ms || 0) - 1000);
+        const outerEnd = rightMs !== null ? rightMs + BOUNDARY_BUFFER_MS : ((captions[chainEnd].end_ms || 0) + 1000);
+
+        // Allocate sub-window for THIS caption based on its text length share
+        // within the chain. Single-caption chains keep the full outer window.
+        if (chainHead === chainEnd) {
+          startMs = outerStart;
+          endMs = outerEnd;
+        } else {
+          const chainTexts = [];
+          for (let k = chainHead; k <= chainEnd; k++) {
+            chainTexts.push(resolveText(captions[k], suggestionsMap.get(captions[k].index)) || '');
+          }
+          const lens = chainTexts.map(t => Math.max(1, t.trim().length));
+          const totalLen = lens.reduce((a, b) => a + b, 0);
+          const totalSpan = Math.max(1000, outerEnd - outerStart);
+          const localIdx = idx - chainHead;
+          let cumStart = 0;
+          for (let k = 0; k < localIdx; k++) cumStart += lens[k];
+          const subStart = outerStart + Math.round((cumStart / totalLen) * totalSpan);
+          const subEnd = outerStart + Math.round(((cumStart + lens[localIdx]) / totalLen) * totalSpan);
+          // Pad sub-window slightly so WhisperX has wiggle room; clamp to outer
+          const PAD_MS = 250;
+          startMs = Math.max(outerStart, subStart - PAD_MS);
+          endMs = Math.min(outerEnd, subEnd + PAD_MS);
+        }
+
         if (endMs - startMs < 1000) endMs = startMs + 1000;
         alignmentWindows.set(cap.index, { windowStart: startMs, windowEnd: endMs });
       }
@@ -415,9 +483,20 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
   const merged = originalCaptions.map(cap => {
     const suggestion = suggestionsMap.get(cap.index);
     const isChanged = !!suggestion;
-    const newText = isChanged && suggestion.new_text !== null && suggestion.new_text !== undefined
-      ? suggestion.new_text
-      : cap.text;
+    // Resolve final text. A delete is signalled by either change_type="delete"
+    // OR new_text being null/undefined/empty when there's a suggestion (Gemini
+    // sometimes returns null instead of "" for deletes). Otherwise use the
+    // suggestion's new_text, or fall back to original.
+    let newText;
+    if (isChanged) {
+      const isDelete = suggestion.change_type === 'delete' ||
+        suggestion.new_text === null ||
+        suggestion.new_text === undefined ||
+        (typeof suggestion.new_text === 'string' && suggestion.new_text.trim() === '');
+      newText = isDelete ? '' : suggestion.new_text;
+    } else {
+      newText = cap.text;
+    }
 
     // Timing: only use WhisperX result for CHANGED captions.
     // Unchanged captions keep original Stage-1 timing exactly.
@@ -456,7 +535,36 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
   });
 
   // Drop captions whose accepted suggestion deleted them (empty new_text)
-  const surviving = merged.filter(c => c.text && c.text.trim().length > 0);
+  let surviving = merged.filter(c => c.text && c.text.trim().length > 0);
+
+  // Redistribution-chain dedup: when Gemini shifts text forward through a chain
+  // of consecutive captions, it sometimes forgets to issue a suggestion for the
+  // last "donor" caption — leaving its original text as a duplicate of what the
+  // previous (changed) caption already absorbed. Detect & drop those donors.
+  const normalizeForCompare = s => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const dedupFlags = new Array(surviving.length).fill(false);
+  for (let i = 0; i < surviving.length - 1; i++) {
+    const curr = surviving[i];
+    const next = surviving[i + 1];
+    if (!curr.changed || next.changed) continue;
+    const currNorm = normalizeForCompare(curr.text);
+    const nextNorm = normalizeForCompare(next.text);
+    if (nextNorm.length < 4) continue; // ignore trivially short
+    if (currNorm.includes(nextNorm)) dedupFlags[i + 1] = true;
+  }
+  // Reverse direction: changed caption fully contained inside an unchanged neighbour above
+  for (let i = 1; i < surviving.length; i++) {
+    const prev = surviving[i - 1];
+    const curr = surviving[i];
+    if (!curr.changed || prev.changed || dedupFlags[i - 1]) continue;
+    const prevNorm = normalizeForCompare(prev.text);
+    const currNorm = normalizeForCompare(curr.text);
+    if (currNorm.length < 4) continue;
+    if (prevNorm.includes(currNorm)) dedupFlags[i - 1] = true;
+  }
+  if (dedupFlags.some(Boolean)) {
+    surviving = surviving.filter((_, i) => !dedupFlags[i]);
+  }
 
   // Clamp overlaps in original index order — DO NOT sort by timestamp.
   // Sorting by WhisperX timestamps reorders text content when alignment is imperfect,
