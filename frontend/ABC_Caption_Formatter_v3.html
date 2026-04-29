@@ -121,6 +121,23 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 .diff-after { color: var(--accent); white-space: pre-wrap; margin-top: 4px; }
 .diff-tag { display: inline-block; padding: 1px 5px; border-radius: 2px; font-size: 9px; background: var(--accent-dim); color: var(--accent); margin-top: 3px; }
 
+/* ── STAGE 3 PREVIEW ─────────────────────────────────────────────────── */
+.cap-row.changed-gemini { background: #1a1200; border-left: 2px solid #c8910a; }
+.cap-row.changed-gemini:hover { background: #1f1600; }
+.cap-row.changed-gemini.ir { background: #161208; border-left: 2px solid #c8910a; }
+.cap-row.changed-whisper { background: #001218; border-left: 2px solid #0a8fa0; }
+.cap-row.changed-whisper:hover { background: #001820; }
+.cap-row.changed-gemini .cap-time { background: transparent; }
+.cap-row.changed-whisper .cap-time { background: transparent; }
+.final-tag { display: inline-block; padding: 1px 5px; border-radius: 2px; font-size: 9px; margin-top: 3px; }
+.final-tag.phrase-break { background: #2a1e00; color: #c8910a; }
+.final-tag.name-kept { background: #1a1a2a; color: #7788cc; }
+.final-tag.merge { background: #0f2010; color: #55aa66; }
+.final-tag.split { background: #0f2010; color: #55aa66; }
+.final-tag.whisper { background: #001820; color: #0a8fa0; }
+.final-tag.delete { background: #200a0a; color: #c04040; }
+.final-tag.other { background: var(--accent-dim); color: var(--accent); }
+
 /* ── EASTER EGG ──────────────────────────────────────────────────────── */
 #easter-egg {
   display: none;
@@ -263,7 +280,7 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 <body>
 
 <header>
-  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260429</span></div>
+  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260429b</span></div>
   <div class="legend">
     <div class="legend-item"><div class="swatch" style="background:var(--surface2);border:1px solid var(--border)"></div>Host / narration</div>
     <div class="legend-item"><div class="swatch" style="background:var(--italic-bg);border:1px solid var(--italic-line)"></div>Quote / non-host (italic)</div>
@@ -357,9 +374,22 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 
   <!-- Download / skip bar -->
   <div id="stage2-download" style="display:none;" class="action-bar">
-    <button class="btn-run" id="btn-download-refined">Align timing &amp; download →</button>
+    <button class="btn-run" id="btn-download-refined">Align timing &amp; preview →</button>
     <button class="btn-dl" id="btn-skip-refinement" style="margin-left:6px;">Skip</button>
     <div class="action-note" id="stage2-download-note"></div>
+  </div>
+
+  <!-- Stage 3: Final caption preview -->
+  <div id="stage3-preview" style="display:none; border-top: 1px solid var(--border);">
+    <div class="output-bar">
+      <div class="output-stats">
+        <span class="pill pill-g" id="final-caption-count"></span>
+        <span class="pill" id="final-changed-count" style="background:#2a1e00; color:#c8910a;"></span>
+        <span style="font-family:var(--mono); font-size:10px; color:var(--muted);">· review then download</span>
+      </div>
+      <button class="btn-dl" id="btn-final-download">↓ Download refined .srt</button>
+    </div>
+    <div id="final-preview-container" class="caption-scroll" style="max-height:480px;"></div>
   </div>
 
 </div>
@@ -380,6 +410,7 @@ let stage2OriginalCaptions  = [];     // Captions sent to Phase 1 (stored for Ph
 let stage2Suggestions       = [];     // Raw Gemini suggestions from Phase 1
 let stage2Accepted          = new Set(); // caption_index values user accepted
 let stage2Status            = 'idle'; // idle | suggesting | done | error
+let stage2FinalCaptions     = null;   // Final captions after timing fix, for download
 const API_BASE_URL       = 'https://abc-captions.onrender.com'; // Point to live Render proxy
 const API_SECRET         = 'abc-captions-2026'; // Must match Render SHARED_SECRET
 
@@ -998,6 +1029,7 @@ document.getElementById('reject-all').addEventListener('click', () => {
 });
 
 document.getElementById('btn-download-refined').addEventListener('click', () => downloadRefinedSRT());
+document.getElementById('btn-final-download').addEventListener('click', () => downloadFinalSRT());
 
 document.getElementById('btn-skip-refinement').addEventListener('click', () => {
   stage2Status = 'idle';
@@ -1136,7 +1168,7 @@ function updateAcceptedSet() {
   });
 }
 
-// Phase 2: send accepted suggestions to WhisperX, then download
+// Phase 2: send accepted suggestions to WhisperX, then show preview
 async function downloadRefinedSRT() {
   if (!stage2Audio || stage2OriginalCaptions.length === 0) return;
 
@@ -1146,6 +1178,7 @@ async function downloadRefinedSRT() {
   document.getElementById('stage2-progress').style.display = 'block';
   document.getElementById('stage2-error').style.display = 'none';
   document.getElementById('stage2-download-note').textContent = '';
+  document.getElementById('stage3-preview').style.display = 'none';
 
   const accepted = stage2Suggestions.filter(s => stage2Accepted.has(s.caption_index));
 
@@ -1175,43 +1208,126 @@ async function downloadRefinedSRT() {
     // Convert API captions to writeSRT format.
     // Unchanged captions reuse their Stage 1 line split (already correct).
     // Changed captions run splitLines() on the new Gemini text.
-    const finalCaptions = data.captions.map(c => {
-      const orig = stage2OriginalCaptions.find(r => r.index === c.index) || {};
+    stage2FinalCaptions = data.captions.map(c => {
       const origResult = result.find((r, i) => (r.index || i + 1) === c.index) || {};
       const lines = c.changed
         ? splitLines(c.text || '')
         : (origResult.lines && origResult.lines.length ? origResult.lines : splitLines(c.text || ''));
+      const timingChanged = !c.changed &&
+        (Math.abs((c.start_ms || 0) - (origResult.start || 0)) > 50 ||
+         Math.abs((c.end_ms || 0) - (origResult.end || 0)) > 50);
       return {
         ...origResult,
         lines,
         italic: c.italic,
         start: c.start_ms,
         end: c.end_ms,
+        changed: c.changed,
+        change_type: c.change_type,
+        timing_changed: timingChanged,
+        original_text: c.original_text,
+        cap_index: c.index,
       };
     });
 
-    const srtContent = writeSRT(finalCaptions);
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([srtContent], { type: 'text/plain' }));
-    link.download = srtFileName.replace(/\.srt$/i, '_refined.srt');
-    link.click();
+    renderFinalPreview(stage2FinalCaptions);
 
     const noteEl = document.getElementById('stage2-download-note');
     noteEl.textContent = data.status === 'partial'
-      ? 'Downloaded (note: ' + (data.error || 'partial — WhisperX unavailable') + ')'
-      : 'Downloaded!';
+      ? 'Preview ready (note: ' + (data.error || 'partial — WhisperX unavailable') + ')'
+      : 'Preview ready — review below then download';
 
     if (data.error) showStage2Error('Note: ' + data.error);
 
   } catch (err) {
     console.error('Stage 2 Phase 2 error:', err);
-    showStage2Error('Download error: ' + err.message);
+    showStage2Error('Alignment error: ' + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Align timing & download →';
+    btn.textContent = 'Align timing & preview →';
     document.getElementById('stage2-progress').style.display = 'none';
   }
-  // Intentionally NOT hiding stage2-section so user can download again or try different settings
+}
+
+function renderFinalPreview(captions) {
+  const changedGemini = captions.filter(c => c.changed).length;
+  const changedWhisper = captions.filter(c => c.timing_changed && !c.changed).length;
+
+  document.getElementById('final-caption-count').textContent =
+    captions.length + ' caption' + (captions.length !== 1 ? 's' : '');
+
+  const changedPill = document.getElementById('final-changed-count');
+  const totalChanged = changedGemini + changedWhisper;
+  if (totalChanged > 0) {
+    changedPill.textContent = changedGemini + ' Gemini' + (changedWhisper ? ' · ' + changedWhisper + ' timing' : '') + ' changed';
+    changedPill.style.display = '';
+  } else {
+    changedPill.style.display = 'none';
+  }
+
+  const container = document.getElementById('final-preview-container');
+  container.innerHTML = '';
+
+  captions.forEach((c, i) => {
+    const row = document.createElement('div');
+    const isGemini = c.changed;
+    const isWhisper = c.timing_changed && !c.changed;
+    let cls = 'cap-row';
+    if (c.italic) cls += ' ir';
+    if (isGemini) cls += ' changed-gemini';
+    else if (isWhisper) cls += ' changed-whisper';
+    row.className = cls;
+
+    // Time column
+    const timeCol = document.createElement('div');
+    timeCol.className = 'cap-time';
+    let tagHtml = '';
+    if (isGemini && c.change_type) {
+      const ct = c.change_type;
+      let tagCls = 'final-tag ';
+      if (ct === 'phrase_break') tagCls += 'phrase-break';
+      else if (ct === 'name_kept_together') tagCls += 'name-kept';
+      else if (ct === 'merge') tagCls += 'merge';
+      else if (ct === 'split') tagCls += 'split';
+      else if (ct === 'delete') tagCls += 'delete';
+      else tagCls += 'other';
+      tagHtml = '<br><span class="' + tagCls + '">' + esc(ct) + '</span>';
+    } else if (isWhisper) {
+      tagHtml = '<br><span class="final-tag whisper">timing</span>';
+    }
+    timeCol.innerHTML = fmtTime(c.start).slice(0, 8) + tagHtml;
+
+    // Body column
+    const bodyCol = document.createElement('div');
+    bodyCol.className = 'cap-body';
+
+    if (isGemini && c.original_text) {
+      // Show old → new
+      const oldLines = c.italic
+        ? '<span style="color:#854040;text-decoration:line-through;opacity:0.7;">' + esc(c.original_text) + '</span>'
+        : '<span style="color:#854040;text-decoration:line-through;opacity:0.7;">' + esc(c.original_text) + '</span>';
+      const newLines = c.lines.map(esc).join('\n');
+      bodyCol.innerHTML = oldLines + '\n' + newLines;
+    } else {
+      bodyCol.textContent = c.lines.join('\n');
+    }
+
+    row.appendChild(timeCol);
+    row.appendChild(bodyCol);
+    container.appendChild(row);
+  });
+
+  document.getElementById('stage3-preview').style.display = 'block';
+  document.getElementById('stage3-preview').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function downloadFinalSRT() {
+  if (!stage2FinalCaptions) return;
+  const srtContent = writeSRT(stage2FinalCaptions);
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([srtContent], { type: 'text/plain' }));
+  link.download = srtFileName.replace(/\.srt$/i, '_refined.srt');
+  link.click();
 }
 
 function showStage2Error(msg) {
@@ -1256,6 +1372,8 @@ function showStage2() {
   document.getElementById('stage2-download').style.display = 'none';
   document.getElementById('stage2-error').style.display = 'none';
   document.getElementById('stage2-download-note').textContent = '';
+  document.getElementById('stage3-preview').style.display = 'none';
+  stage2FinalCaptions = null;
 }
 
 // ── EASTER EGG ───────────────────────────────────────────────────────────────
