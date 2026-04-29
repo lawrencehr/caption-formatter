@@ -431,6 +431,16 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
     }
   }
 
+  // Snap-to-next pass: extend each caption's end to meet the next one's start,
+  // but only for small gaps (< 500ms). Larger gaps = intentional silence, let it fade.
+  const SNAP_THRESHOLD_MS = 500;
+  for (let i = 0; i < surviving.length - 1; i++) {
+    const gap = surviving[i + 1].start_ms - surviving[i].end_ms;
+    if (gap > 0 && gap < SNAP_THRESHOLD_MS) {
+      surviving[i].end_ms = surviving[i + 1].start_ms;
+    }
+  }
+
   // Renumber sequentially (so SRT indices are 1..N consecutively)
   return surviving.map((c, i) => ({ ...c, index: i + 1 }));
 }
