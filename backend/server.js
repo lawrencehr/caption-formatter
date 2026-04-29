@@ -258,12 +258,17 @@ ${JSON.stringify(captions.map(c => ({
       const suggestion = suggestionsMap.get(cap.index);
       // If new_text is strictly empty string, we keep it as empty so WhisperX ignores it
       const newText = suggestion && suggestion.new_text !== null && suggestion.new_text !== undefined ? suggestion.new_text : cap.text;
+      
+      // ONLY widen the timing window if Gemini changed this caption.
+      // If unchanged, keep exact original bounds to prevent WhisperX from mistakenly snapping to nearby noise.
+      const startMs = cap.start_ms !== null ? (suggestion ? Math.max(0, cap.start_ms - 3000) : cap.start_ms) : null;
+      const endMs = cap.end_ms !== null ? (suggestion ? cap.end_ms + 3000 : cap.end_ms) : null;
+      
       return {
         index: cap.index,
         text: newText,
-        // Widen the timing window by 3 seconds in both directions so WhisperX can find words that were moved
-        start_ms: cap.start_ms !== null ? Math.max(0, cap.start_ms - 3000) : null,
-        end_ms: cap.end_ms !== null ? cap.end_ms + 3000 : null
+        start_ms: startMs,
+        end_ms: endMs
       };
     }).filter(c => c.text.trim().length > 0); // Don't send empty captions to WhisperX
 
@@ -372,11 +377,22 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
 
   return originalCaptions.map(cap => {
     const suggestion = suggestionsMap.get(cap.index);
-    const timingData = timingMap.get(cap.index);
+    let timingData = timingMap.get(cap.index);
+
+    // If WhisperX alignment failed for a widened caption, it falls back to the widened bounds!
+    // We must detect this and revert to the original precise bounds instead.
+    if (timingData && suggestion && cap.start_ms !== null && cap.end_ms !== null) {
+      const widenedStart = Math.max(0, cap.start_ms - 3000);
+      const widenedEnd = cap.end_ms + 3000;
+      if (timingData.start_ms === widenedStart && timingData.end_ms === widenedEnd) {
+        timingData.start_ms = cap.start_ms;
+        timingData.end_ms = cap.end_ms;
+      }
+    }
 
     return {
       index: cap.index,
-      text: suggestion && suggestion.new_text ? suggestion.new_text : cap.text,
+      text: suggestion && suggestion.new_text !== null && suggestion.new_text !== undefined ? suggestion.new_text : cap.text,
       italic: cap.italic, // ALWAYS from original — never modified
       start_ms: timingData ? timingData.start_ms : cap.start_ms,
       end_ms: timingData ? timingData.end_ms : cap.end_ms,
