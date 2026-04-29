@@ -90,7 +90,7 @@ No preamble. No markdown. Raw JSON array only.`;
     };
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -132,7 +132,7 @@ app.post('/api/refine', async (req, res) => {
     }
 
     const audioFile = req.files.audio;
-    const audioBuffer = audioFile.data;
+    const audioBuffer = fs.readFileSync(audioFile.tempFilePath);
     const audioBase64 = audioBuffer.toString('base64');
     const audioFormat = audioFile.mimetype.includes('mp3') ? 'mp3' :
                         audioFile.mimetype.includes('wav') ? 'wav' : 'm4a';
@@ -142,6 +142,7 @@ app.post('/api/refine', async (req, res) => {
     }
 
     console.log(`[/api/refine] Processing ${captions.length} captions, audio size: ${audioBuffer.length} bytes`);
+
 
     // ── Step 1: Gemini caption refinement ──────────────────────────────────────
     console.log('[/api/refine] Step 1: Calling Gemini for caption suggestions...');
@@ -196,7 +197,7 @@ ${JSON.stringify(captions.map(c => ({
     };
 
     const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
