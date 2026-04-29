@@ -5,10 +5,12 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
+import asyncio
+import json
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 
@@ -16,14 +18,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 SHARED_SECRET = os.getenv("SHARED_SECRET", "development-secret")
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "medium")  # base|small|medium — large-v3 too slow on CPU
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "medium")
 
 # Models loaded once at startup
 _align_model = None
 _align_metadata = None
 _device = "cpu"
 
-# ── Startup: load models ─────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _align_model, _align_metadata, _device
@@ -39,15 +40,13 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Alignment model ready.")
     yield
-    # nothing to clean up
 
 app = FastAPI(title="WhisperX Alignment Server", lifespan=lifespan)
 
-# ── Models ────────────────────────────────────────────────────────────────────
 class CaptionInput(BaseModel):
     index: int
     text: str
-    start_ms: Optional[int] = None  # original SRT timing — required for forced alignment
+    start_ms: Optional[int] = None
     end_ms: Optional[int] = None
 
 class AlignRequest(BaseModel):
@@ -68,9 +67,8 @@ class CaptionOutput(BaseModel):
     end_ms: int
     words: List[WordTimestamp]
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
 @app.middleware("http")
-async def verify_secret(request, call_next):
+async def verify_secret(request: Request, call_next):
     if request.url.path == "/health":
         return await call_next(request)
     secret = request.headers.get("X-Secret")
@@ -78,19 +76,12 @@ async def verify_secret(request, call_next):
         return JSONResponse(status_code=401, content={"error": "Unauthorized"})
     return await call_next(request)
 
-# ── Endpoints ────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "whisperx-alignment", "device": _device}
 
 @app.post("/align")
 async def align_captions(request: AlignRequest):
-    """
-    Force-aligns provided caption text to audio.
-    Requires start_ms/end_ms on each caption for accurate alignment.
-    """
-    import whisperx
-
     if not request.audio_base64:
         raise HTTPException(400, "audio_base64 is required")
     if not request.captions:
@@ -104,70 +95,75 @@ async def align_captions(request: AlignRequest):
 
     logger.info(f"Aligning {len(request.captions)} captions on {_device}")
 
-    # Decode audio
     try:
         audio_bytes = base64.b64decode(request.audio_base64)
     except Exception as e:
         raise HTTPException(400, f"Invalid base64: {e}")
 
     suffix = f".{request.audio_format}"
-    tmp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
-            f.write(audio_bytes)
-            tmp_path = f.name
 
-        logger.info(f"Audio: {len(audio_bytes)/1024:.0f} KB → {tmp_path}")
-
-        # Load audio (requires ffmpeg in PATH)
+    def do_alignment():
+        import whisperx
+        tmp_path = None
         try:
-            audio = whisperx.load_audio(tmp_path)
-        except Exception as e:
-            raise HTTPException(500, f"Audio loading failed (ffmpeg installed?): {e}")
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+                f.write(audio_bytes)
+                tmp_path = f.name
 
-        # Build segments for forced alignment
-        # If we have SRT timestamps, use them — they bound where each caption lives in the audio
-        segments = []
-        for cap in request.captions:
-            seg = {"text": cap.text}
-            if cap.start_ms is not None:
-                seg["start"] = cap.start_ms / 1000.0
-            if cap.end_ms is not None:
-                seg["end"] = cap.end_ms / 1000.0
-            segments.append(seg)
+            logger.info(f"Audio: {len(audio_bytes)/1024:.0f} KB → {tmp_path}")
 
-        logger.info("Running forced alignment...")
-        try:
-            result = whisperx.align(
-                segments,
-                _align_model,
-                _align_metadata,
-                audio,
-                device=_device,
-                return_char_alignments=False,
-            )
-        except Exception as e:
-            raise HTTPException(500, f"Alignment failed: {e}")
-
-        logger.info(f"Alignment complete — {len(result.get('segments', []))} segments")
-
-        # Map aligned segments back to caption indices
-        aligned = _build_output(request.captions, result.get("segments", []))
-        return {"status": "success", "captions": aligned}
-
-    finally:
-        if tmp_path and Path(tmp_path).exists():
             try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
+                audio = whisperx.load_audio(tmp_path)
+            except Exception as e:
+                return {"error": f"Audio loading failed (ffmpeg installed?): {e}"}
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+            segments = []
+            for cap in request.captions:
+                seg = {"text": cap.text}
+                if cap.start_ms is not None:
+                    seg["start"] = cap.start_ms / 1000.0
+                if cap.end_ms is not None:
+                    seg["end"] = cap.end_ms / 1000.0
+                segments.append(seg)
+
+            logger.info("Running forced alignment...")
+            try:
+                result = whisperx.align(
+                    segments,
+                    _align_model,
+                    _align_metadata,
+                    audio,
+                    device=_device,
+                    return_char_alignments=False,
+                )
+            except Exception as e:
+                return {"error": f"Alignment failed: {e}"}
+
+            logger.info(f"Alignment complete — {len(result.get('segments', []))} segments")
+            aligned = _build_output(request.captions, result.get("segments", []))
+            return {"status": "success", "captions": aligned}
+
+        finally:
+            if tmp_path and Path(tmp_path).exists():
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+    async def generate():
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(None, do_alignment)
+        
+        while not future.done():
+            yield b" "
+            await asyncio.sleep(10)
+            
+        result_dict = future.result()
+        yield json.dumps(result_dict).encode('utf-8')
+
+    return StreamingResponse(generate(), media_type="application/json")
+
 def _build_output(captions: List[CaptionInput], segments: list) -> list:
-    """
-    Pair aligned segments back to their original caption index.
-    WhisperX preserves segment order, so zip by position is safe.
-    """
     output = []
     for i, cap in enumerate(captions):
         seg = segments[i] if i < len(segments) else {}
@@ -181,7 +177,6 @@ def _build_output(captions: List[CaptionInput], segments: list) -> list:
                     "end_ms": int(w["end"] * 1000),
                 })
 
-        # Prefer word-derived start/end; fall back to segment; fall back to original SRT
         if words:
             start_ms = words[0]["start_ms"]
             end_ms = words[-1]["end_ms"]
@@ -199,10 +194,8 @@ def _build_output(captions: List[CaptionInput], segments: list) -> list:
             "end_ms": end_ms,
             "words": words,
         })
-
     return output
 
-# ── Main ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8765"))
     uvicorn.run("server:app", host="0.0.0.0", port=port, log_level="info")

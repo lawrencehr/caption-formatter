@@ -1224,6 +1224,7 @@ async function downloadRefinedSRT() {
         end: c.end_ms,
         changed: c.changed,
         change_type: c.change_type,
+        reason: c.reason,
         timing_changed: timingChanged,
         original_text: c.original_text,
         cap_index: c.index,
@@ -1277,10 +1278,17 @@ function renderFinalPreview(captions) {
     if (isGemini) cls += ' changed-gemini';
     else if (isWhisper) cls += ' changed-whisper';
     row.className = cls;
+    row.style.display = 'grid';
+    row.style.gridTemplateColumns = '76px 1fr 200px';
+    row.style.gap = '12px';
+    row.style.alignItems = 'start';
 
-    // Time column
+    // Time & badge column
     const timeCol = document.createElement('div');
     timeCol.className = 'cap-time';
+    timeCol.style.display = 'flex';
+    timeCol.style.flexDirection = 'column';
+    timeCol.style.gap = '4px';
     let tagHtml = '';
     if (isGemini && c.change_type) {
       const ct = c.change_type;
@@ -1291,15 +1299,16 @@ function renderFinalPreview(captions) {
       else if (ct === 'split') tagCls += 'split';
       else if (ct === 'delete') tagCls += 'delete';
       else tagCls += 'other';
-      tagHtml = '<br><span class="' + tagCls + '">' + esc(ct) + '</span>';
+      tagHtml = '<span class="' + tagCls + '" style="display:inline-block;">' + esc(ct) + '</span>';
     } else if (isWhisper) {
-      tagHtml = '<br><span class="final-tag whisper">timing</span>';
+      tagHtml = '<span class="final-tag whisper" style="display:inline-block;">timing</span>';
     }
-    timeCol.innerHTML = fmtTime(c.start).slice(0, 8) + tagHtml;
+    timeCol.innerHTML = fmtTime(c.start).slice(0, 8) + (tagHtml ? '<br>' + tagHtml : '');
 
     // Body column
     const bodyCol = document.createElement('div');
     bodyCol.className = 'cap-body';
+    bodyCol.style.lineHeight = '1.5';
 
     if (isGemini && c.original_text) {
       // Show old → new
@@ -1312,8 +1321,19 @@ function renderFinalPreview(captions) {
       bodyCol.textContent = c.lines.join('\n');
     }
 
+    // Reason column
+    const reasonCol = document.createElement('div');
+    reasonCol.className = 'cap-reason';
+    reasonCol.style.fontSize = '11px';
+    reasonCol.style.color = 'var(--muted)';
+    reasonCol.style.fontFamily = 'var(--mono)';
+    reasonCol.style.lineHeight = '1.4';
+    reasonCol.textContent = (c.reason || '—').substring(0, 150) + (c.reason && c.reason.length > 150 ? '…' : '');
+    reasonCol.title = c.reason || '';
+
     row.appendChild(timeCol);
     row.appendChild(bodyCol);
+    row.appendChild(reasonCol);
     container.appendChild(row);
   });
 

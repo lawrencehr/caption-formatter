@@ -528,6 +528,7 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
       end_ms: endMs,
       changed: isChanged,
       change_type: isChanged ? suggestion.change_type : null,
+      reason: isChanged ? suggestion.reason : null,
       original_text: cap.text,
       timing_flag: cap.timingFlag || null,
       partial: isPartial

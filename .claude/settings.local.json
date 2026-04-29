@@ -4,7 +4,25 @@
       "Bash(python -c \"import sys; print\\('Python path:', sys.executable\\)\")",
       "Bash(nvidia-smi)",
       "PowerShell(nvidia-smi 2>&1)",
-      "Bash(ffmpeg -version)"
+      "Bash(ffmpeg -version)",
+      "Bash(node -e ' *)",
+      "Bash(node patch_stage2.js)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(gh api *)",
+      "WebFetch(domain:lawrencehr.github.io)",
+      "Bash(curl -s \"https://lawrencehr.github.io/abc-captions/ABC_Caption_Formatter_v3.html\")",
+      "Bash(curl -sI \"https://lawrencehr.github.io/abc-captions/ABC_Caption_Formatter_v3.html\")",
+      "Bash(git fetch *)",
+      "Bash(git checkout *)",
+      "Bash(git stash *)",
+      "Bash(cp frontend/ABC_Caption_Formatter_v3.html ABC_Caption_Formatter_v3.html)",
+      "Bash(git commit *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/lawrencehr/abc-captions/master/ABC_Caption_Formatter_v3.html\")",
+      "Bash(git merge *)",
+      "Bash(node -c backend/server.js)"
     ]
   }
 }
