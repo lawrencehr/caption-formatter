@@ -282,6 +282,11 @@ ${JSON.stringify(captions.map(c => ({
     let whisperxResult = null;
     let whisperxError = null;
 
+    // Start sending spaces to frontend to avert Render 100s timeout
+    res.setHeader('Content-Type', 'application/json');
+    res.flushHeaders();
+    const keepAlive = setInterval(() => res.write(' '), 10000);
+
     try {
       const whisperxResponse = await fetch(`${whisperxURL}/align`, {
         method: 'POST',
@@ -327,19 +332,24 @@ ${JSON.stringify(captions.map(c => ({
 
     console.log(`[/api/refine] Pipeline complete in ${Date.now() - startTime}ms`);
 
-    return res.json({
+    clearInterval(keepAlive);
+    res.write(JSON.stringify({
       status: whisperxError ? 'partial' : 'success',
       error: whisperxError || null,
       stages,
       captions: mergedCaptions
-    });
+    }));
+    return res.end();
 
   } catch (err) {
+    if (typeof keepAlive !== 'undefined') clearInterval(keepAlive);
     console.error('[/api/refine] Unexpected error:', err);
-    return res.status(500).json({
+    if (!res.headersSent) res.setHeader('Content-Type', 'application/json');
+    res.write(JSON.stringify({
       status: 'error',
       error: `Refinement pipeline error: ${err.message}`
-    });
+    }));
+    return res.end();
   }
 });
 
