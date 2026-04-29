@@ -200,7 +200,7 @@ ${JSON.stringify(captions.map(c => ({
       };
 
       // Try models in order, falling back on 503/UNAVAILABLE
-      const geminiModels = ['gemini-3.0-flash', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+      const geminiModels = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.0-flash'];
       let geminiResponse, geminiData;
       for (let attempt = 0; attempt < geminiModels.length; attempt++) {
         const model = geminiModels[attempt];
