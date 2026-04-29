@@ -357,7 +357,7 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 
   <!-- Download / skip bar -->
   <div id="stage2-download" style="display:none;" class="action-bar">
-    <button class="btn-run" id="btn-download-refined">↓ Download refined SRT</button>
+    <button class="btn-run" id="btn-download-refined">Align timing &amp; download →</button>
     <button class="btn-dl" id="btn-skip-refinement" style="margin-left:6px;">Skip</button>
     <div class="action-note" id="stage2-download-note"></div>
   </div>
@@ -1204,7 +1204,7 @@ async function downloadRefinedSRT() {
     showStage2Error('Download error: ' + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = '↓ Download refined SRT';
+    btn.textContent = 'Align timing & download →';
     document.getElementById('stage2-progress').style.display = 'none';
   }
   // Intentionally NOT hiding stage2-section so user can download again or try different settings
