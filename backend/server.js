@@ -167,6 +167,17 @@ CRITICAL RULES FOR MOVING TEXT:
    - Return an update for 90 removing the word (set new_text to "" if the caption becomes empty).
 3. DO NOT DUPLICATE WORDS across captions.
 
+NAME TAG RULE:
+A speaker name tag (e.g. "LIAM BARTLETT:", "CHRIS BOWEN:") MUST always remain as the FIRST LINE of its own caption.
+- NEVER move text from a preceding caption into a caption that starts with a name tag — it would push the name tag off the top line.
+- NEVER move the name tag itself away from the start of its caption.
+- When text following a name tag is too long, redistribute words with the caption AFTER the name tag caption, not the caption before it.
+
+ITALIC BOUNDARY RULE:
+Never suggest changes that would merge text across italic/non-italic boundaries.
+- If caption N is italic and caption N+1 is not italic (or vice versa), do NOT move text between them.
+- Each caption must be entirely italic or entirely non-italic.
+
 DO NOT CHANGE:
 - The actual words spoken (no rewriting, only adjusting where breaks fall)
 - Italic markers
@@ -274,20 +285,44 @@ ${JSON.stringify(captions.map(c => {
 
     console.log(`[/api/refine] Phase 2: WhisperX for ${captions.length} captions, ${acceptedSuggestions.length} accepted changes`);
 
-    // Build textForAlignment using only the accepted suggestions
+    // Build textForAlignment using only the accepted suggestions.
+    // For changed captions, bound the WhisperX search window to the gap between
+    // the nearest unchanged captions on each side — this prevents WhisperX from
+    // grabbing words that belong to adjacent stable captions (the old ±3s approach
+    // was too wide and caused timestamps to collide and captions to be reordered).
     const suggestionsMap = new Map(acceptedSuggestions.map(s => [s.caption_index, s]));
-    const textForAlignment = captions.map(cap => {
+    const isChangedSet = new Set(acceptedSuggestions.map(s => s.caption_index));
+    const BOUNDARY_BUFFER_MS = 300;
+    const alignmentWindows = new Map(); // capIndex → { windowStart, windowEnd }
+
+    const textForAlignment = captions.map((cap, i) => {
       const suggestion = suggestionsMap.get(cap.index);
-      const newText = suggestion && suggestion.new_text !== null && suggestion.new_text !== undefined ? suggestion.new_text : cap.text;
-      const startMs = cap.start_ms !== null ? (suggestion ? Math.max(0, cap.start_ms - 3000) : cap.start_ms) : null;
-      const endMs = cap.end_ms !== null ? (suggestion ? cap.end_ms + 3000 : cap.end_ms) : null;
+      const newText = suggestion && suggestion.new_text !== null && suggestion.new_text !== undefined
+        ? suggestion.new_text : cap.text;
+
+      let startMs = cap.start_ms;
+      let endMs = cap.end_ms;
+      if (suggestion) {
+        let leftMs = null, rightMs = null;
+        for (let j = i - 1; j >= 0; j--) {
+          if (!isChangedSet.has(captions[j].index)) { leftMs = captions[j].end_ms; break; }
+        }
+        for (let j = i + 1; j < captions.length; j++) {
+          if (!isChangedSet.has(captions[j].index)) { rightMs = captions[j].start_ms; break; }
+        }
+        startMs = Math.max(0, leftMs !== null ? leftMs - BOUNDARY_BUFFER_MS : (cap.start_ms || 0) - 1000);
+        endMs = rightMs !== null ? rightMs + BOUNDARY_BUFFER_MS : (cap.end_ms || 0) + 1000;
+        if (endMs - startMs < 1000) endMs = startMs + 1000;
+        alignmentWindows.set(cap.index, { windowStart: startMs, windowEnd: endMs });
+      }
+
       return { index: cap.index, text: newText, start_ms: startMs, end_ms: endMs };
     }).filter(c => c.text && c.text.trim().length > 0);
 
     const whisperxURL = process.env.WHISPERX_URL;
     if (!whisperxURL) {
       console.warn('WHISPERX_URL not configured, returning accepted text with original timing');
-      const fallbackResult = _mergeCaptionSuggestions(captions, acceptedSuggestions, captions, true);
+      const fallbackResult = _mergeCaptionSuggestions(captions, acceptedSuggestions, captions, true, new Map());
       return res.json({
         status: 'partial',
         error: 'WhisperX not configured — using accepted text with original timing',
@@ -341,7 +376,8 @@ ${JSON.stringify(captions.map(c => {
       captions,
       acceptedSuggestions,
       timingFromWhisperX,
-      !!whisperxError
+      !!whisperxError,
+      alignmentWindows
     );
 
     console.log(`[/api/refine] Phase 2 complete in ${Date.now() - startTime}ms`);
@@ -372,7 +408,7 @@ ${JSON.stringify(captions.map(c => {
 //    their original Stage-1 timing so we don't break the back-to-back caption flow
 //  - Captions whose suggestion sets new_text="" (delete intent) are dropped
 //  - Survivors are renumbered sequentially starting from 1
-function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions, isPartial) {
+function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions, isPartial, alignmentWindows = new Map()) {
   const suggestionsMap = new Map(suggestions.map(s => [s.caption_index, s]));
   const timingMap = new Map(timingCaptions.map(t => [t.index, t]));
 
@@ -384,16 +420,18 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
       : cap.text;
 
     // Timing: only use WhisperX result for CHANGED captions.
-    // Unchanged captions keep original timing so the SRT stays back-to-back.
+    // Unchanged captions keep original Stage-1 timing exactly.
     let startMs = cap.start_ms;
     let endMs = cap.end_ms;
     if (isChanged) {
       const timingData = timingMap.get(cap.index);
       if (timingData) {
-        const widenedStart = cap.start_ms !== null ? Math.max(0, cap.start_ms - 3000) : null;
-        const widenedEnd = cap.end_ms !== null ? cap.end_ms + 3000 : null;
-        // If WhisperX hit the widened bounds, alignment failed for this caption — revert to original
-        if (widenedStart !== null && timingData.start_ms === widenedStart && timingData.end_ms === widenedEnd) {
+        const win = alignmentWindows.get(cap.index);
+        // Detect WhisperX failure: it returned exactly the input window bounds (fallback behavior)
+        const failedAlignment = win &&
+          timingData.start_ms === win.windowStart &&
+          timingData.end_ms === win.windowEnd;
+        if (failedAlignment) {
           startMs = cap.start_ms;
           endMs = cap.end_ms;
         } else {
@@ -420,19 +458,20 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
   // Drop captions whose accepted suggestion deleted them (empty new_text)
   const surviving = merged.filter(c => c.text && c.text.trim().length > 0);
 
-  // Sort by start time and clamp any overlaps caused by WhisperX shifts
-  surviving.sort((a, b) => (a.start_ms || 0) - (b.start_ms || 0));
+  // Clamp overlaps in original index order — DO NOT sort by timestamp.
+  // Sorting by WhisperX timestamps reorders text content when alignment is imperfect,
+  // which is worse than slightly mis-timed captions in the correct order.
   for (let i = 1; i < surviving.length; i++) {
     if (surviving[i].start_ms < surviving[i - 1].end_ms) {
       surviving[i].start_ms = surviving[i - 1].end_ms;
     }
     if (surviving[i].end_ms <= surviving[i].start_ms) {
-      surviving[i].end_ms = surviving[i].start_ms + 500; // minimum 0.5s
+      surviving[i].end_ms = surviving[i].start_ms + 500;
     }
   }
 
   // Snap-to-next pass: extend each caption's end to meet the next one's start,
-  // but only for small gaps (< 500ms). Larger gaps = intentional silence, let it fade.
+  // but only for small gaps (< 500ms). Larger gaps = intentional silence.
   const SNAP_THRESHOLD_MS = 500;
   for (let i = 0; i < surviving.length - 1; i++) {
     const gap = surviving[i + 1].start_ms - surviving[i].end_ms;
@@ -441,7 +480,6 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
     }
   }
 
-  // Renumber sequentially (so SRT indices are 1..N consecutively)
   return surviving.map((c, i) => ({ ...c, index: i + 1 }));
 }
 
