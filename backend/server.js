@@ -199,15 +199,13 @@ ${JSON.stringify(captions.map(c => ({
         generationConfig: { temperature: 0.2 }
       };
 
-      // Try gemini-2.5-flash first, fall back to gemini-2.0-flash on 503
-      const geminiModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+      // Try models in order, falling back on 503/UNAVAILABLE
+      const geminiModels = ['gemini-3.0-flash', 'gemini-2.5-flash', 'gemini-2.0-flash'];
       let geminiResponse, geminiData;
-      for (let attempt = 0; attempt < 4; attempt++) {
-        const model = attempt < 2 ? geminiModels[0] : geminiModels[1];
+      for (let attempt = 0; attempt < geminiModels.length; attempt++) {
+        const model = geminiModels[attempt];
         if (attempt > 0) {
-          const delay = attempt < 2 ? 3000 : 0; // 3s between 2.5-flash retries, immediate for fallback
-          if (delay) await new Promise(r => setTimeout(r, delay));
-          console.log(`[/api/refine] Gemini retry ${attempt} using ${model}...`);
+          console.log(`[/api/refine] Gemini falling back to ${model}...`);
         }
         geminiResponse = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
@@ -219,7 +217,7 @@ ${JSON.stringify(captions.map(c => ({
         if (errBody?.error?.status !== 'UNAVAILABLE' && errBody?.error?.status !== 'RESOURCE_EXHAUSTED') {
           return res.status(500).json({ status: 'error', error: `Gemini API error: ${errBody?.error?.message || geminiResponse.statusText}` });
         }
-        if (attempt === 3) {
+        if (attempt === geminiModels.length - 1) {
           return res.status(503).json({ status: 'error', error: 'Gemini is overloaded — please try again in a minute.' });
         }
       }
