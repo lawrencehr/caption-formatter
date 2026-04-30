@@ -165,6 +165,7 @@ PRIORITISE:
 - Captions where a person's name is split across two captions
 - Caption breaks that fall mid-phrase or mid-thought when the audio has a natural pause elsewhere
 - Captions that combine end-of-one-thought + start-of-another (should split)
+- Single-word captions that feel abrupt (should be merged)
 
 CRITICAL RULES FOR MOVING TEXT:
 1. If you move words from one caption to another, you MUST return an update for BOTH captions to prevent duplicating text!
@@ -219,6 +220,9 @@ Captions with a speaker name tag (e.g. "JOHN SMITH:") always use the first line 
 For these, effective_max_chars = 60 - length of the name tag line.
 If a caption has line_too_long: true, the current text overflows — you MUST suggest a redistribution of words with neighbouring captions so the spoken text fits within effective_max_chars total characters.
 Write new_text as a flat string with NO line breaks — the formatter will split it automatically.
+
+SINGLE WORD RULE:
+Avoid captions that contain only a single word unless it is a significant exclamation or the start of a new speaker. Merge single-word captions into the preceding or following caption to maintain flow, provided it doesn't violate line length or italic rules.
 
 INPUT CAPTIONS:
 ${JSON.stringify(captions.map(c => {
