@@ -318,6 +318,12 @@ ${JSON.stringify(captions.map(c => {
     // was too wide and caused timestamps to collide and captions to be reordered).
     const suggestionsMap = new Map(acceptedSuggestions.map(s => [s.caption_index, s]));
     const isChangedSet = new Set(acceptedSuggestions.map(s => s.caption_index));
+    // Also mark captions with "Timing needs" flags for alignment (even without suggestions)
+    for (const cap of captions) {
+      if (cap.timingFlag && cap.timingFlag.startsWith('Timing needs')) {
+        isChangedSet.add(cap.index);
+      }
+    }
     const BOUNDARY_BUFFER_MS = 300;
     const alignmentWindows = new Map(); // capIndex → { windowStart, windowEnd }
 
@@ -349,10 +355,11 @@ ${JSON.stringify(captions.map(c => {
     const textForAlignment = captions.map((cap, idx) => {
       const suggestion = suggestionsMap.get(cap.index);
       const newText = resolveText(cap, suggestion);
+      const hasTimingNeeds = cap.timingFlag && cap.timingFlag.startsWith('Timing needs');
 
       let startMs = cap.start_ms;
       let endMs = cap.end_ms;
-      if (suggestion) {
+      if (suggestion || hasTimingNeeds) {
         const chainHead = chainStart[idx];
         // Find outer window: nearest unchanged neighbours on either side of the chain
         let leftMs = null, rightMs = null;
@@ -509,11 +516,13 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
       newText = cap.text;
     }
 
-    // Timing: only use WhisperX result for CHANGED captions.
-    // Unchanged captions keep original Stage-1 timing exactly.
+    // Timing: use WhisperX result for CHANGED captions OR captions flagged "Timing needs".
+    // Unchanged captions without structural issues keep original Stage-1 timing exactly.
     let startMs = cap.start_ms;
     let endMs = cap.end_ms;
-    if (isChanged) {
+    const hasTimingNeeds = cap.timingFlag && cap.timingFlag.startsWith('Timing needs');
+    const shouldAlign = isChanged || hasTimingNeeds;
+    if (shouldAlign) {
       const timingData = timingMap.get(cap.index);
       if (timingData) {
         const win = alignmentWindows.get(cap.index);
