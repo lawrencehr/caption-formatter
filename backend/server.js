@@ -206,7 +206,7 @@ DO NOT CHANGE:
 - The overall sequence of captions (don't reorder)
 
 OUTPUT FORMAT:
-Return a JSON array containing ONLY objects for captions that require changes. If no changes are needed for any caption, return []. Do not include captions that remain unchanged.
+Return ONLY a JSON array. No preamble. No markdown. If no changes needed, return [].
 For each change, specify:
 - caption_index: the 1-based index from the input
 - new_text: the suggested replacement text (or "" if deleted)
@@ -227,8 +227,12 @@ ${JSON.stringify(captions.map(c => {
   const nameTagMatch = lines[0] && NAME_TAG_RE.test(lines[0].trim());
   const nameTagLen = nameTagMatch ? lines[0].trim().length : 0;
   const effectiveMax = nameTagMatch ? 60 - nameTagLen : 60;
+  // Check if any spoken line (skip name tag line) exceeds 30 chars
   const spokenLines = nameTagMatch ? lines.slice(1) : lines;
   const lineTooLong = spokenLines.some(l => l.trim().length > 30);
+  // Only send timing flags that represent real problems Gemini must address.
+  // "Timing adjusted — …" flags indicate Stage 1 already modified timing and don't need AI to rewrite text,
+  // but they DO need WhisperX retiming (handled separately).
   const realTimingFlag = c.timingFlag && c.timingFlag.startsWith('Timing needs') ? c.timingFlag : null;
   const entry = {
     index: c.index,
@@ -250,17 +254,7 @@ ${JSON.stringify(captions.map(c => {
             { text: geminiPrompt }
           ]
         }],
-        generationConfig: { 
-          temperature: 0.1,
-          maxOutputTokens: 8192,
-          response_mime_type: "application/json"
-        },
-        safetySettings: [
-          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
-        ]
+        generationConfig: { temperature: 0.2 }
       };
 
       // Try models in order, falling back on 503/UNAVAILABLE
@@ -277,12 +271,12 @@ ${JSON.stringify(captions.map(c => {
         );
         if (geminiResponse.ok) break;
         const errBody = await geminiResponse.json();
-        console.error(`Gemini ${model} attempt ${attempt} failed: ${errBody?.error?.status || geminiResponse.status}`);
-        if (errBody?.error?.status !== 'UNAVAILABLE' && errBody?.error?.status !== 'RESOURCE_EXHAUSTED' && errBody?.error?.status !== 'NOT_FOUND') {
+        console.error(`Gemini ${model} attempt ${attempt} failed: ${errBody?.error?.status}`);
+        if (errBody?.error?.status !== 'UNAVAILABLE' && errBody?.error?.status !== 'RESOURCE_EXHAUSTED') {
           return res.status(500).json({ status: 'error', error: `Gemini API error: ${errBody?.error?.message || geminiResponse.statusText}` });
         }
         if (attempt === geminiModels.length - 1) {
-          return res.status(503).json({ status: 'error', error: 'Gemini is overloaded or models are unavailable — please try again in a minute.' });
+          return res.status(503).json({ status: 'error', error: 'Gemini is overloaded — please try again in a minute.' });
         }
       }
 
@@ -290,46 +284,22 @@ ${JSON.stringify(captions.map(c => {
 
       let suggestions = [];
       try {
-        let responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
         console.log('Gemini response (first 500 chars):', responseText.substring(0, 500));
-        
-        // 1. Remove Markdown code blocks if Gemini ignores "no markdown" instruction
-        responseText = responseText.replace(/```(?:json)?\n?([\s\S]*?)\n?```/g, '$1').trim();
-        
-        // 2. Extract the array part if there's preamble or if it was truncated
-        const firstBracket = responseText.indexOf('[');
-        const lastBracket = responseText.lastIndexOf(']');
-        
-        if (firstBracket !== -1) {
-          if (lastBracket !== -1 && lastBracket > firstBracket) {
-            // Found a complete array
-            responseText = responseText.substring(firstBracket, lastBracket + 1);
-          } else {
-            // Truncated! Attempt recovery by finding the last complete object and closing the array
-            console.warn('[/api/refine] Gemini response appears truncated. Attempting recovery...');
-            const lastCurly = responseText.lastIndexOf('}');
-            if (lastCurly !== -1) {
-              responseText = responseText.substring(firstBracket, lastCurly + 1) + ']';
-            }
-          }
-        }
-
+        const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+        suggestions = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(responseText);
+      } catch (e) {
+        console.warn(`Could not parse Gemini suggestions: ${e.message}`);
+        suggestions = [];
       }
 
-      suggestions = JSON.parse(responseText);
-    } catch (e) {
-      console.warn(`Could not parse Gemini suggestions: ${e.message}`);
-      suggestions = [];
+      stages.gemini = { duration_ms: Date.now() - geminiStartTime, suggestions_count: suggestions.length };
+      console.log(`[/api/refine] Phase 1 complete: ${suggestions.length} suggestions in ${Date.now() - startTime}ms`);
+
+      clearInterval(keepAlive);
+      res.write(JSON.stringify({ status: 'suggestions', stages, suggestions }));
+      return res.end();
     }
-
-    stages.gemini = { duration_ms: Date.now() - geminiStartTime, suggestions_count: suggestions.length };
-    console.log(`[/api/refine] Phase 1 complete: ${suggestions.length} suggestions in ${Date.now() - startTime}ms`);
-
-    res.write(JSON.stringify({ status: 'suggestions', stages, suggestions }));
-    return res.end();
-  } finally {
-    if (keepAlive) clearInterval(keepAlive);
-  }
 
     // ── PHASE 2: WhisperX alignment with user-accepted suggestions ────────────
     let acceptedSuggestions;
