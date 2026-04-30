@@ -90,7 +90,7 @@ No preamble. No markdown. Raw JSON array only.`;
     };
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -254,11 +254,15 @@ ${JSON.stringify(captions.map(c => {
             { text: geminiPrompt }
           ]
         }],
-        generationConfig: { temperature: 0.2 }
+        generationConfig: { 
+          temperature: 0.2,
+          maxOutputTokens: 8192
+        }
       };
 
       // Try models in order, falling back on 503/UNAVAILABLE
-      const geminiModels = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+      // Corrected model names to match standard Gemini API identifiers
+      const geminiModels = ['gemini-2.0-flash', 'gemini-1.5-flash'];
       let geminiResponse, geminiData;
       for (let attempt = 0; attempt < geminiModels.length; attempt++) {
         const model = geminiModels[attempt];
@@ -271,12 +275,12 @@ ${JSON.stringify(captions.map(c => {
         );
         if (geminiResponse.ok) break;
         const errBody = await geminiResponse.json();
-        console.error(`Gemini ${model} attempt ${attempt} failed: ${errBody?.error?.status}`);
-        if (errBody?.error?.status !== 'UNAVAILABLE' && errBody?.error?.status !== 'RESOURCE_EXHAUSTED') {
+        console.error(`Gemini ${model} attempt ${attempt} failed: ${errBody?.error?.status || geminiResponse.status}`);
+        if (errBody?.error?.status !== 'UNAVAILABLE' && errBody?.error?.status !== 'RESOURCE_EXHAUSTED' && errBody?.error?.status !== 'NOT_FOUND') {
           return res.status(500).json({ status: 'error', error: `Gemini API error: ${errBody?.error?.message || geminiResponse.statusText}` });
         }
         if (attempt === geminiModels.length - 1) {
-          return res.status(503).json({ status: 'error', error: 'Gemini is overloaded — please try again in a minute.' });
+          return res.status(503).json({ status: 'error', error: 'Gemini is overloaded or models are unavailable — please try again in a minute.' });
         }
       }
 
@@ -284,10 +288,31 @@ ${JSON.stringify(captions.map(c => {
 
       let suggestions = [];
       try {
-        const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        let responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
         console.log('Gemini response (first 500 chars):', responseText.substring(0, 500));
-        const jsonMatch = responseText.match(/\[[\s\S]*\]/);
-        suggestions = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(responseText);
+        
+        // 1. Remove Markdown code blocks if Gemini ignores "no markdown" instruction
+        responseText = responseText.replace(/```(?:json)?\n?([\s\S]*?)\n?```/g, '$1').trim();
+        
+        // 2. Extract the array part if there's preamble or if it was truncated
+        const firstBracket = responseText.indexOf('[');
+        const lastBracket = responseText.lastIndexOf(']');
+        
+        if (firstBracket !== -1) {
+          if (lastBracket !== -1 && lastBracket > firstBracket) {
+            // Found a complete array
+            responseText = responseText.substring(firstBracket, lastBracket + 1);
+          } else {
+            // Truncated! Attempt recovery by finding the last complete object and closing the array
+            console.warn('[/api/refine] Gemini response appears truncated. Attempting recovery...');
+            const lastCurly = responseText.lastIndexOf('}');
+            if (lastCurly !== -1) {
+              responseText = responseText.substring(firstBracket, lastCurly + 1) + ']';
+            }
+          }
+        }
+
+        suggestions = JSON.parse(responseText);
       } catch (e) {
         console.warn(`Could not parse Gemini suggestions: ${e.message}`);
         suggestions = [];
