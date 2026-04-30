@@ -337,19 +337,23 @@ ${JSON.stringify(captions.map(c => {
       return isDelete ? '' : suggestion.new_text;
     };
 
-    // Group consecutive changed captions into chains so we can split their
-    // shared outer window into proportional sub-windows. Without this, three
-    // adjacent changed captions all get the same window and WhisperX collapses
-    // them into 0.5s micro-captions.
+    // Group consecutive captions needing alignment into chains, then send each
+    // caption in a chain with the FULL chain outer window. WhisperX's forced
+    // alignment returns word-level timestamps, so we trust it to assign words
+    // correctly to each segment based on text — no proportional sub-windowing
+    // needed. We use first-word-start / last-word-end from the word array later.
     const chainStart = new Array(captions.length).fill(-1);
-    let i = 0;
-    while (i < captions.length) {
-      if (!isChangedSet.has(captions[i].index)) { i++; continue; }
-      const start = i;
-      while (i < captions.length && isChangedSet.has(captions[i].index)) {
-        chainStart[i] = start;
-        i++;
+    const chainEnd = new Array(captions.length).fill(-1);
+    let ci = 0;
+    while (ci < captions.length) {
+      if (!isChangedSet.has(captions[ci].index)) { ci++; continue; }
+      const start = ci;
+      while (ci < captions.length && isChangedSet.has(captions[ci].index)) {
+        chainStart[ci] = start;
+        ci++;
       }
+      const end = ci - 1;
+      for (let k = start; k <= end; k++) chainEnd[k] = end;
     }
 
     const textForAlignment = captions.map((cap, idx) => {
@@ -360,45 +364,18 @@ ${JSON.stringify(captions.map(c => {
       let startMs = cap.start_ms;
       let endMs = cap.end_ms;
       if (suggestion || hasTimingNeeds) {
-        const chainHead = chainStart[idx];
-        // Find outer window: nearest unchanged neighbours on either side of the chain
+        const head = chainStart[idx];
+        const tail = chainEnd[idx];
+        // Outer window: nearest unchanged neighbours either side of the chain
         let leftMs = null, rightMs = null;
-        for (let j = chainHead - 1; j >= 0; j--) {
+        for (let j = head - 1; j >= 0; j--) {
           if (!isChangedSet.has(captions[j].index)) { leftMs = captions[j].end_ms; break; }
         }
-        let chainEnd = chainHead;
-        while (chainEnd + 1 < captions.length && chainStart[chainEnd + 1] === chainHead) chainEnd++;
-        for (let j = chainEnd + 1; j < captions.length; j++) {
+        for (let j = tail + 1; j < captions.length; j++) {
           if (!isChangedSet.has(captions[j].index)) { rightMs = captions[j].start_ms; break; }
         }
-        const outerStart = Math.max(0, leftMs !== null ? leftMs - BOUNDARY_BUFFER_MS : (captions[chainHead].start_ms || 0) - 1000);
-        const outerEnd = rightMs !== null ? rightMs + BOUNDARY_BUFFER_MS : ((captions[chainEnd].end_ms || 0) + 1000);
-
-        // Allocate sub-window for THIS caption based on its text length share
-        // within the chain. Single-caption chains keep the full outer window.
-        if (chainHead === chainEnd) {
-          startMs = outerStart;
-          endMs = outerEnd;
-        } else {
-          const chainTexts = [];
-          for (let k = chainHead; k <= chainEnd; k++) {
-            chainTexts.push(resolveText(captions[k], suggestionsMap.get(captions[k].index)) || '');
-          }
-          const lens = chainTexts.map(t => Math.max(1, t.trim().length));
-          const totalLen = lens.reduce((a, b) => a + b, 0);
-          const totalSpan = Math.max(1000, outerEnd - outerStart);
-          const localIdx = idx - chainHead;
-          let cumStart = 0;
-          for (let k = 0; k < localIdx; k++) cumStart += lens[k];
-          const subStart = outerStart + Math.round((cumStart / totalLen) * totalSpan);
-          const subEnd = outerStart + Math.round(((cumStart + lens[localIdx]) / totalLen) * totalSpan);
-          // Pad sub-window slightly so WhisperX has wiggle room; clamp to outer
-          const PAD_MS = 250;
-          startMs = Math.max(outerStart, subStart - PAD_MS);
-          endMs = Math.min(outerEnd, subEnd + PAD_MS);
-        }
-
-        if (endMs - startMs < 1000) endMs = startMs + 1000;
+        startMs = Math.max(0, leftMs !== null ? leftMs - BOUNDARY_BUFFER_MS : (captions[head].start_ms || 0) - 1000);
+        endMs = rightMs !== null ? rightMs + BOUNDARY_BUFFER_MS : ((captions[tail].end_ms || 0) + 1000);
         alignmentWindows.set(cap.index, { windowStart: startMs, windowEnd: endMs });
       }
 
@@ -516,28 +493,22 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
       newText = cap.text;
     }
 
-    // Timing: use WhisperX result for CHANGED captions OR captions flagged "Timing needs".
-    // Unchanged captions without structural issues keep original Stage-1 timing exactly.
+    // Timing: use word-level WhisperX result for changed/flagged captions.
+    // Unchanged captions without structural issues keep original Stage-1 timing.
+    // Failure signal: empty or missing words array → fall back to Stage 1 timing.
     let startMs = cap.start_ms;
     let endMs = cap.end_ms;
     const hasTimingNeeds = cap.timingFlag && cap.timingFlag.startsWith('Timing needs');
     const shouldAlign = isChanged || hasTimingNeeds;
     if (shouldAlign) {
       const timingData = timingMap.get(cap.index);
-      if (timingData) {
-        const win = alignmentWindows.get(cap.index);
-        // Detect WhisperX failure: it returned exactly the input window bounds (fallback behavior)
-        const failedAlignment = win &&
-          timingData.start_ms === win.windowStart &&
-          timingData.end_ms === win.windowEnd;
-        if (failedAlignment) {
-          startMs = cap.start_ms;
-          endMs = cap.end_ms;
-        } else {
-          startMs = timingData.start_ms;
-          endMs = timingData.end_ms;
-        }
+      const words = timingData && Array.isArray(timingData.words) ? timingData.words : [];
+      if (words.length > 0) {
+        // Trust word-level alignment: first word starts the caption, last word ends it
+        startMs = words[0].start_ms;
+        endMs = words[words.length - 1].end_ms;
       }
+      // else: WhisperX couldn't find words for this caption → keep Stage 1 timing
     }
 
     return {
@@ -608,6 +579,19 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
     const gap = surviving[i + 1].start_ms - surviving[i].end_ms;
     if (gap > 0 && gap < SNAP_THRESHOLD_MS) {
       surviving[i].end_ms = surviving[i + 1].start_ms;
+    }
+  }
+
+  // Premiere minimum duration: enforce ≥500ms per caption (well above the
+  // 6-frame ~240ms hard floor). Push end forward; if that overlaps the next
+  // caption, push the next caption's start forward too.
+  const MIN_DURATION_MS = 500;
+  for (let i = 0; i < surviving.length; i++) {
+    if (surviving[i].end_ms - surviving[i].start_ms < MIN_DURATION_MS) {
+      surviving[i].end_ms = surviving[i].start_ms + MIN_DURATION_MS;
+      if (i + 1 < surviving.length && surviving[i + 1].start_ms < surviving[i].end_ms) {
+        surviving[i + 1].start_ms = surviving[i].end_ms;
+      }
     }
   }
 
