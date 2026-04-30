@@ -163,32 +163,62 @@ Your job: review the captions against what is actually said in the audio, and su
 PRIORITISE:
 - Captions flagged with "⚠" — these are known to have timing issues
 - Captions where a person's name is split across two captions
-- Caption breaks that fall mid-phrase or mid-thought
+- Caption breaks that fall mid-phrase or mid-thought when the audio has a natural pause elsewhere
 - Captions that combine end-of-one-thought + start-of-another (should split)
 
 CRITICAL RULES FOR MOVING TEXT:
 1. If you move words from one caption to another, you MUST return an update for BOTH captions to prevent duplicating text!
-2. DO NOT DUPLICATE WORDS across captions.
-3. CHAIN COMPLETENESS: when you shift text through a sequence, EVERY affected caption MUST have an update. If caption N's text is pushed to N+1, then N+1 MUST also have an update.
+2. For example, if you move the word "retailers" from caption 90 to 89:
+   - Return an update for 89 adding the word.
+   - Return an update for 90 removing the word (set new_text to "" if the caption becomes empty).
+3. DO NOT DUPLICATE WORDS across captions.
+4. CHAIN COMPLETENESS: when you shift text forward (or backward) through a sequence of captions, EVERY caption in the chain must have an update. If caption N's new_text consumes words from N+1, then N+1 MUST also have an update — either with its new (shifted) text, or with new_text="" if it becomes empty. Never leave the last caption in a chain untouched while its text has been absorbed elsewhere — that creates a duplicate.
+   Worked example — original captions:
+     #75 "its existing copper,"
+     #76 "zinc, and lead"
+     #77 "mine, MMG plans to bulldoze"
+     #78 "hundreds of hectares of the Tarkine,"
+     #79 "for a new gigantic tailings dam of toxic sludge."
+   If you redistribute as:
+     #75 → "LIAM BARTLETT: … to expand its existing"
+     #76 → "copper, zinc, and lead mine, MMG plans to"
+     #77 → "bulldoze hundreds of hectares of the Tarkine,"
+   then you MUST also include:
+     #78 → "for a new gigantic tailings dam of toxic sludge."  (its words got pushed forward)
+     #79 → ""  (empty because all its words were consumed)
+   Otherwise #78 will keep "hundreds of hectares of the Tarkine," and duplicate #77's tail.
 
 NAME TAG RULE:
-A speaker name tag (e.g. "LIAM BARTLETT:") MUST always remain as the FIRST LINE of its own caption.
+A speaker name tag (e.g. "LIAM BARTLETT:", "CHRIS BOWEN:") MUST always remain as the FIRST LINE of its own caption.
+- NEVER move text from a preceding caption into a caption that starts with a name tag — it would push the name tag off the top line.
+- NEVER move the name tag itself away from the start of its caption.
+- When text following a name tag is too long, redistribute words with the caption AFTER the name tag caption, not the caption before it.
 
 ITALIC BOUNDARY RULE:
 Never suggest changes that would merge text across italic/non-italic boundaries.
+- If caption N is italic and caption N+1 is not italic (or vice versa), do NOT move text between them.
+- Each caption must be entirely italic or entirely non-italic.
 
 DO NOT CHANGE:
-- The actual words spoken
+- The actual words spoken (no rewriting, only adjusting where breaks fall)
 - Italic markers
-- Visual attributions/names/dates at the end of captions (e.g. "- Email, ACCC Spokesperson") MUST BE KEPT EXACTLY AS THEY ARE.
+- Visual attributions, names, or dates at the end of captions (e.g. "- Email, ACCC Spokesperson, 20 Apr 2026") MUST BE KEPT EXACTLY AS THEY ARE, even if they are not spoken in the audio!
+- The overall sequence of captions (don't reorder)
 
 OUTPUT FORMAT:
 Return a JSON array containing ONLY objects for captions that require changes. If no changes are needed for any caption, return []. Do not include captions that remain unchanged.
-Each change object must have:
-- caption_index: (int) the 1-based index
-- new_text: (string) the replacement text (or "" if deleted)
+For each change, specify:
+- caption_index: the 1-based index from the input
+- new_text: the suggested replacement text (or "" if deleted)
 - change_type: "phrase_break" | "name_kept_together" | "timing_only" | "split" | "merge" | "delete"
-- reason: (string) 1-sentence explanation
+- reason: 1-sentence explanation
+
+LINE LENGTH RULE:
+Each caption is displayed on up to 2 lines, max 30 characters per line (60 total for normal captions).
+Captions with a speaker name tag (e.g. "JOHN SMITH:") always use the first line for the name tag, leaving only the second line for spoken text.
+For these, effective_max_chars = 60 - length of the name tag line.
+If a caption has line_too_long: true, the current text overflows — you MUST suggest a redistribution of words with neighbouring captions so the spoken text fits within effective_max_chars total characters.
+Write new_text as a flat string with NO line breaks — the formatter will split it automatically.
 
 INPUT CAPTIONS:
 ${JSON.stringify(captions.map(c => {
