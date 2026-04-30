@@ -311,11 +311,6 @@ ${JSON.stringify(captions.map(c => {
 
     console.log(`[/api/refine] Phase 2: WhisperX for ${captions.length} captions, ${acceptedSuggestions.length} accepted changes`);
 
-    // Build textForAlignment using only the accepted suggestions.
-    // For changed captions, bound the WhisperX search window to the gap between
-    // the nearest unchanged captions on each side — this prevents WhisperX from
-    // grabbing words that belong to adjacent stable captions (the old ±3s approach
-    // was too wide and caused timestamps to collide and captions to be reordered).
     const suggestionsMap = new Map(acceptedSuggestions.map(s => [s.caption_index, s]));
     const isChangedSet = new Set(acceptedSuggestions.map(s => s.caption_index));
     // Also mark captions with "Timing needs" flags for alignment (even without suggestions)
@@ -325,9 +320,7 @@ ${JSON.stringify(captions.map(c => {
       }
     }
     const BOUNDARY_BUFFER_MS = 300;
-    const alignmentWindows = new Map(); // capIndex → { windowStart, windowEnd }
 
-    // Resolve final text per caption (treats null/empty/delete as empty)
     const resolveText = (cap, suggestion) => {
       if (!suggestion) return cap.text;
       const isDelete = suggestion.change_type === 'delete' ||
@@ -337,11 +330,10 @@ ${JSON.stringify(captions.map(c => {
       return isDelete ? '' : suggestion.new_text;
     };
 
-    // Group consecutive captions needing alignment into chains, then send each
-    // caption in a chain with the FULL chain outer window. WhisperX's forced
-    // alignment returns word-level timestamps, so we trust it to assign words
-    // correctly to each segment based on text — no proportional sub-windowing
-    // needed. We use first-word-start / last-word-end from the word array later.
+    const tokenize = text =>
+      (text || '').toLowerCase().replace(/[^\w\s]/g, ' ').trim().split(/\s+/).filter(t => t.length > 0);
+
+    // Group consecutive changed/timing-flagged captions into chains.
     const chainStart = new Array(captions.length).fill(-1);
     const chainEnd = new Array(captions.length).fill(-1);
     let ci = 0;
@@ -356,36 +348,64 @@ ${JSON.stringify(captions.map(c => {
       for (let k = start; k <= end; k++) chainEnd[k] = end;
     }
 
-    const textForAlignment = captions.map((cap, idx) => {
-      const suggestion = suggestionsMap.get(cap.index);
-      const newText = resolveText(cap, suggestion);
-      const hasTimingNeeds = cap.timingFlag && cap.timingFlag.startsWith('Timing needs');
+    // Build ONE WhisperX segment per chain (concatenated text, chain outer window).
+    // WhisperX returns word-level timestamps for the whole chain; we then walk
+    // words by token count to assign per-caption timing — no internal boundary
+    // confusion because we never ask WhisperX to split the chain itself.
+    const chainTextMap = new Map(); // headArrayIdx → chain metadata
+    const processedChainHeads = new Set();
+    let chainArrayIdx = 0;
 
-      let startMs = cap.start_ms;
-      let endMs = cap.end_ms;
-      if (suggestion || hasTimingNeeds) {
-        const head = chainStart[idx];
-        const tail = chainEnd[idx];
-        // Outer window: nearest unchanged neighbours either side of the chain
-        let leftMs = null, rightMs = null;
-        for (let j = head - 1; j >= 0; j--) {
-          if (!isChangedSet.has(captions[j].index)) { leftMs = captions[j].end_ms; break; }
-        }
-        for (let j = tail + 1; j < captions.length; j++) {
-          if (!isChangedSet.has(captions[j].index)) { rightMs = captions[j].start_ms; break; }
-        }
-        startMs = Math.max(0, leftMs !== null ? leftMs - BOUNDARY_BUFFER_MS : (captions[head].start_ms || 0) - 1000);
-        endMs = rightMs !== null ? rightMs + BOUNDARY_BUFFER_MS : ((captions[tail].end_ms || 0) + 1000);
-        alignmentWindows.set(cap.index, { windowStart: startMs, windowEnd: endMs });
+    for (let idx = 0; idx < captions.length; idx++) {
+      if (!isChangedSet.has(captions[idx].index)) continue;
+      const head = chainStart[idx];
+      if (processedChainHeads.has(head)) continue;
+      processedChainHeads.add(head);
+
+      const tail = chainEnd[head];
+
+      // Only include non-deleted captions so concat text matches word count
+      const capEntries = [];
+      for (let k = head; k <= tail; k++) {
+        const cap = captions[k];
+        const resolvedText = resolveText(cap, suggestionsMap.get(cap.index));
+        if (resolvedText && resolvedText.trim()) capEntries.push({ cap, text: resolvedText });
       }
+      if (capEntries.length === 0) continue;
 
-      return { index: cap.index, text: newText, start_ms: startMs, end_ms: endMs };
-    }).filter(c => c.text && c.text.trim().length > 0);
+      const concatText = capEntries.map(e => e.text).join(' ');
+
+      let leftMs = null, rightMs = null;
+      for (let j = head - 1; j >= 0; j--) {
+        if (!isChangedSet.has(captions[j].index)) { leftMs = captions[j].end_ms; break; }
+      }
+      for (let j = tail + 1; j < captions.length; j++) {
+        if (!isChangedSet.has(captions[j].index)) { rightMs = captions[j].start_ms; break; }
+      }
+      const windowStart = Math.max(0, leftMs !== null ? leftMs - BOUNDARY_BUFFER_MS : (captions[head].start_ms || 0) - 1000);
+      const windowEnd = rightMs !== null ? rightMs + BOUNDARY_BUFFER_MS : ((captions[tail].end_ms || 0) + 1000);
+
+      chainTextMap.set(head, {
+        text: concatText,
+        startMs: windowStart,
+        endMs: windowEnd,
+        capEntries,
+        rightBoundary: rightMs,
+        arrayIdx: chainArrayIdx++
+      });
+    }
+
+    const textForAlignment = [...chainTextMap.values()].map(chain => ({
+      index: chain.arrayIdx,
+      text: chain.text,
+      start_ms: chain.startMs,
+      end_ms: chain.endMs
+    }));
 
     const whisperxURL = process.env.WHISPERX_URL;
     if (!whisperxURL) {
       console.warn('WHISPERX_URL not configured, returning accepted text with original timing');
-      const fallbackResult = _mergeCaptionSuggestions(captions, acceptedSuggestions, captions, true, new Map());
+      const fallbackResult = _mergeCaptionSuggestions(captions, acceptedSuggestions, true, new Map());
       return res.json({
         status: 'partial',
         error: 'WhisperX not configured — using accepted text with original timing',
@@ -422,7 +442,7 @@ ${JSON.stringify(captions.map(c => {
         console.warn(whisperxError);
       } else {
         whisperxResult = await whisperxResponse.json();
-        console.log(`[/api/refine] WhisperX returned timing for ${whisperxResult.captions?.length || 0} captions`);
+        console.log(`[/api/refine] WhisperX returned word timing for ${whisperxResult.captions?.length || 0} chain(s)`);
       }
     } catch (err) {
       whisperxError = `WhisperX unreachable: ${err.message}`;
@@ -435,22 +455,63 @@ ${JSON.stringify(captions.map(c => {
       error: whisperxError
     };
 
-    const timingFromWhisperX = whisperxResult ? whisperxResult.captions : captions;
+    // Walk word-level WhisperX results and assign per-caption timing.
+    // Each chain was one concatenated segment; we distribute words to captions
+    // by token count. Caption N ends where caption N+1 starts (no internal gaps).
+    // Last chain caption extends to the next unchanged caption's start.
+    const chainAssignedTiming = new Map(); // capIndex → {startMs, endMs} | null (Stage 1 fallback)
+
+    if (whisperxResult && Array.isArray(whisperxResult.captions)) {
+      const whisperxChains = new Map(whisperxResult.captions.map(c => [c.index, c.words || []]));
+
+      for (const chain of chainTextMap.values()) {
+        const words = whisperxChains.get(chain.arrayIdx) || [];
+
+        if (words.length === 0) {
+          for (const { cap } of chain.capEntries) chainAssignedTiming.set(cap.index, null);
+          continue;
+        }
+
+        let wordPos = 0;
+        const capWordBuckets = [];
+        for (const { cap, text } of chain.capEntries) {
+          const tokens = tokenize(text);
+          const numTokens = Math.max(tokens.length, 1);
+          const capWords = words.slice(wordPos, wordPos + numTokens);
+          wordPos += numTokens;
+          capWordBuckets.push(capWords.length > 0
+            ? { capIndex: cap.index, startMs: capWords[0].start_ms, endWords: capWords[capWords.length - 1].end_ms }
+            : null);
+        }
+
+        for (let k = 0; k < chain.capEntries.length; k++) {
+          const { cap } = chain.capEntries[k];
+          const bucket = capWordBuckets[k];
+          if (!bucket) { chainAssignedTiming.set(cap.index, null); continue; }
+
+          let endMs;
+          if (k < chain.capEntries.length - 1) {
+            const nextBucket = capWordBuckets[k + 1];
+            endMs = nextBucket ? nextBucket.startMs : bucket.endWords;
+          } else {
+            endMs = chain.rightBoundary !== null ? chain.rightBoundary : bucket.endWords;
+          }
+          chainAssignedTiming.set(cap.index, { startMs: bucket.startMs, endMs });
+        }
+      }
+    }
+
     const mergedCaptions = _mergeCaptionSuggestions(
       captions,
       acceptedSuggestions,
-      timingFromWhisperX,
       !!whisperxError,
-      alignmentWindows
+      chainAssignedTiming
     );
 
-    // Also produce a Gemini-only version (accepted text + Stage 1 timing) so the
-    // frontend can offer a "no timing changes" download alongside the WhisperX one.
-    // Empty timingMap + same captions → falls back to Stage 1 timing in merge.
+    // Gemini-only version: accepted text + Stage 1 timing (no WhisperX changes).
     const geminiOnlyCaptions = _mergeCaptionSuggestions(
       captions,
       acceptedSuggestions,
-      captions,
       true,
       new Map()
     );
@@ -476,25 +537,16 @@ ${JSON.stringify(captions.map(c => {
   }
 });
 
-// Helper: Merge accepted suggestions + WhisperX timing into original captions
-// Rules:
-//  - Italic ALWAYS comes from the original caption (Stage 1)
-//  - Text comes from the accepted suggestion if present, else original
-//  - Timing comes from WhisperX ONLY for changed captions; unchanged captions keep
-//    their original Stage-1 timing so we don't break the back-to-back caption flow
-//  - Captions whose suggestion sets new_text="" (delete intent) are dropped
-//  - Survivors are renumbered sequentially starting from 1
-function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions, isPartial, alignmentWindows = new Map()) {
+// Helper: Merge accepted suggestions + chain-assigned WhisperX timing into original captions.
+// chainAssignedTiming: Map<capIndex, {startMs, endMs}> built by walking word-level
+// results from single-segment chain alignment. Absent entry = Stage 1 fallback.
+function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, chainAssignedTiming = new Map()) {
   const suggestionsMap = new Map(suggestions.map(s => [s.caption_index, s]));
-  const timingMap = new Map(timingCaptions.map(t => [t.index, t]));
 
   const merged = originalCaptions.map(cap => {
     const suggestion = suggestionsMap.get(cap.index);
     const isChanged = !!suggestion;
-    // Resolve final text. A delete is signalled by either change_type="delete"
-    // OR new_text being null/undefined/empty when there's a suggestion (Gemini
-    // sometimes returns null instead of "" for deletes). Otherwise use the
-    // suggestion's new_text, or fall back to original.
+
     let newText;
     if (isChanged) {
       const isDelete = suggestion.change_type === 'delete' ||
@@ -506,22 +558,20 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
       newText = cap.text;
     }
 
-    // Timing: use word-level WhisperX result for changed/flagged captions.
-    // Unchanged captions without structural issues keep original Stage-1 timing.
-    // Failure signal: empty or missing words array → fall back to Stage 1 timing.
+    // Timing: use chain-assigned word-boundary timing for changed/flagged captions.
+    // null entry = WhisperX failed for this chain → keep Stage 1 timing.
+    // Unchanged captions always keep Stage 1 timing.
     let startMs = cap.start_ms;
     let endMs = cap.end_ms;
     const hasTimingNeeds = cap.timingFlag && cap.timingFlag.startsWith('Timing needs');
     const shouldAlign = isChanged || hasTimingNeeds;
     if (shouldAlign) {
-      const timingData = timingMap.get(cap.index);
-      const words = timingData && Array.isArray(timingData.words) ? timingData.words : [];
-      if (words.length > 0) {
-        // Trust word-level alignment: first word starts the caption, last word ends it
-        startMs = words[0].start_ms;
-        endMs = words[words.length - 1].end_ms;
+      const assigned = chainAssignedTiming.get(cap.index);
+      if (assigned) {
+        startMs = assigned.startMs;
+        endMs = assigned.endMs;
       }
-      // else: WhisperX couldn't find words for this caption → keep Stage 1 timing
+      // else: no entry = WhisperX failed for this chain → keep Stage 1 timing
     }
 
     return {
@@ -554,14 +604,12 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
     if (!surviving[i].changed || dedupFlags[i]) continue;
     const changedNorm = normalizeForCompare(surviving[i].text);
     if (changedNorm.length < 4) continue;
-    // Forward window: unchanged captions whose text is fully contained in this changed caption
     for (let j = i + 1; j <= Math.min(i + DEDUP_WINDOW, surviving.length - 1); j++) {
       if (surviving[j].changed || dedupFlags[j]) continue;
       const uncNorm = normalizeForCompare(surviving[j].text);
       if (uncNorm.length < 4) continue;
       if (changedNorm.includes(uncNorm)) dedupFlags[j] = true;
     }
-    // Backward window: unchanged captions above whose text is fully contained in this changed caption
     for (let j = i - 1; j >= Math.max(0, i - DEDUP_WINDOW); j--) {
       if (surviving[j].changed || dedupFlags[j]) continue;
       const uncNorm = normalizeForCompare(surviving[j].text);
@@ -573,9 +621,7 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
     surviving = surviving.filter((_, i) => !dedupFlags[i]);
   }
 
-  // Clamp overlaps in original index order — DO NOT sort by timestamp.
-  // Sorting by WhisperX timestamps reorders text content when alignment is imperfect,
-  // which is worse than slightly mis-timed captions in the correct order.
+  // Clamp overlaps — preserve original text order, never sort by timestamp.
   for (let i = 1; i < surviving.length; i++) {
     if (surviving[i].start_ms < surviving[i - 1].end_ms) {
       surviving[i].start_ms = surviving[i - 1].end_ms;
@@ -585,26 +631,14 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
     }
   }
 
-  // Snap-to-next pass: extend each caption's end to meet the next one's start,
-  // but only for small gaps (< 500ms). Larger gaps = intentional silence.
+  // Snap-to-next: close small gaps (< 500ms) between adjacent captions.
+  // Within-chain gaps are already eliminated by the word-boundary assignment above;
+  // this handles residual gaps at chain/unchanged boundaries and Stage 1 captions.
   const SNAP_THRESHOLD_MS = 500;
   for (let i = 0; i < surviving.length - 1; i++) {
     const gap = surviving[i + 1].start_ms - surviving[i].end_ms;
     if (gap > 0 && gap < SNAP_THRESHOLD_MS) {
       surviving[i].end_ms = surviving[i + 1].start_ms;
-    }
-  }
-
-  // Premiere minimum duration: enforce ≥500ms per caption (well above the
-  // 6-frame ~240ms hard floor). Push end forward; if that overlaps the next
-  // caption, push the next caption's start forward too.
-  const MIN_DURATION_MS = 500;
-  for (let i = 0; i < surviving.length; i++) {
-    if (surviving[i].end_ms - surviving[i].start_ms < MIN_DURATION_MS) {
-      surviving[i].end_ms = surviving[i].start_ms + MIN_DURATION_MS;
-      if (i + 1 < surviving.length && surviving[i + 1].start_ms < surviving[i].end_ms) {
-        surviving[i + 1].start_ms = surviving[i].end_ms;
-      }
     }
   }
 
