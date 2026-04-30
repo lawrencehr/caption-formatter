@@ -281,7 +281,7 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 <body>
 
 <header>
-  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260430f</span></div>
+  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260430g</span></div>
   <div class="legend">
     <div class="legend-item"><div class="swatch" style="background:var(--surface2);border:1px solid var(--border)"></div>Host / narration</div>
     <div class="legend-item"><div class="swatch" style="background:var(--italic-bg);border:1px solid var(--italic-line)"></div>Quote / non-host (italic)</div>
@@ -388,7 +388,10 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
         <span class="pill" id="final-changed-count" style="background:#2a1e00; color:#c8910a;"></span>
         <span style="font-family:var(--mono); font-size:10px; color:var(--muted);">· review then download</span>
       </div>
-      <button class="btn-dl" id="btn-final-download">↓ Download refined .srt</button>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="btn-dl" id="btn-final-download-no-whisper" title="AI text edits, original Stage 1 timing — use if WhisperX timing changes look wrong">↓ AI text only</button>
+        <button class="btn-dl" id="btn-final-download">↓ AI text + WhisperX timing</button>
+      </div>
     </div>
     <div id="final-preview-container" class="caption-scroll" style="max-height:480px;"></div>
   </div>
@@ -412,6 +415,7 @@ let stage2Suggestions       = [];     // Raw Gemini suggestions from Phase 1
 let stage2Accepted          = new Set(); // caption_index values user accepted
 let stage2Status            = 'idle'; // idle | suggesting | done | error
 let stage2FinalCaptions     = null;   // Final captions after timing fix, for download
+let stage2GeminiOnlyCaptions = null;  // AI text edits with original Stage 1 timing
 const API_BASE_URL       = 'https://abc-captions.onrender.com'; // Point to live Render proxy
 const API_SECRET         = 'abc-captions-2026'; // Must match Render SHARED_SECRET
 
@@ -1045,6 +1049,7 @@ document.getElementById('reject-all').addEventListener('click', () => {
 
 document.getElementById('btn-download-refined').addEventListener('click', () => downloadRefinedSRT());
 document.getElementById('btn-final-download').addEventListener('click', () => downloadFinalSRT());
+document.getElementById('btn-final-download-no-whisper').addEventListener('click', () => downloadGeminiOnlySRT());
 
 document.getElementById('btn-skip-refinement').addEventListener('click', () => {
   stage2Status = 'idle';
@@ -1228,12 +1233,12 @@ async function downloadRefinedSRT() {
     // Re-derive italic from boldSegments on every caption — this corrects cases where
     // Gemini moved text across italic boundaries and the inherited flag was wrong.
     // Always re-run splitLines so line breaks reflect the final (possibly redistributed) text.
-    stage2FinalCaptions = data.captions.map(c => {
+    const mapApiCaption = (c, withTimingDiff) => {
       const origResult = result.find((r, i) => (r.index || i + 1) === c.index) || {};
       const text = c.text || '';
       const italic = deriveItalic(text);
       const lines = splitLines(text);
-      const timingChanged = !c.changed &&
+      const timingChanged = withTimingDiff && !c.changed &&
         (Math.abs((c.start_ms || 0) - (origResult.start || 0)) > 50 ||
          Math.abs((c.end_ms || 0) - (origResult.end || 0)) > 50);
       return {
@@ -1249,7 +1254,11 @@ async function downloadRefinedSRT() {
         original_text: c.original_text,
         cap_index: c.index,
       };
-    });
+    };
+    stage2FinalCaptions = data.captions.map(c => mapApiCaption(c, true));
+    stage2GeminiOnlyCaptions = data.captions_no_whisper
+      ? data.captions_no_whisper.map(c => mapApiCaption(c, false))
+      : null;
 
     renderFinalPreview(stage2FinalCaptions);
 
@@ -1359,6 +1368,15 @@ function downloadFinalSRT() {
   link.click();
 }
 
+function downloadGeminiOnlySRT() {
+  if (!stage2GeminiOnlyCaptions) return;
+  const srtContent = writeSRT(stage2GeminiOnlyCaptions);
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([srtContent], { type: 'text/plain' }));
+  link.download = srtFileName.replace(/\.srt$/i, '_refined_no_timing.srt');
+  link.click();
+}
+
 function showStage2Error(msg) {
   const el = document.getElementById('stage2-error');
   el.textContent = msg;
@@ -1403,6 +1421,7 @@ function showStage2() {
   document.getElementById('stage2-download-note').textContent = '';
   document.getElementById('stage3-preview').style.display = 'none';
   stage2FinalCaptions = null;
+  stage2GeminiOnlyCaptions = null;
 }
 
 // ── EASTER EGG ───────────────────────────────────────────────────────────────

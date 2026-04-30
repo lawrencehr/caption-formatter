@@ -390,7 +390,8 @@ ${JSON.stringify(captions.map(c => {
         status: 'partial',
         error: 'WhisperX not configured — using accepted text with original timing',
         stages,
-        captions: fallbackResult
+        captions: fallbackResult,
+        captions_no_whisper: fallbackResult
       });
     }
 
@@ -443,6 +444,17 @@ ${JSON.stringify(captions.map(c => {
       alignmentWindows
     );
 
+    // Also produce a Gemini-only version (accepted text + Stage 1 timing) so the
+    // frontend can offer a "no timing changes" download alongside the WhisperX one.
+    // Empty timingMap + same captions → falls back to Stage 1 timing in merge.
+    const geminiOnlyCaptions = _mergeCaptionSuggestions(
+      captions,
+      acceptedSuggestions,
+      captions,
+      true,
+      new Map()
+    );
+
     console.log(`[/api/refine] Phase 2 complete in ${Date.now() - startTime}ms`);
 
     clearInterval(keepAlive);
@@ -450,7 +462,8 @@ ${JSON.stringify(captions.map(c => {
       status: whisperxError ? 'partial' : 'success',
       error: whisperxError || null,
       stages,
-      captions: mergedCaptions
+      captions: mergedCaptions,
+      captions_no_whisper: geminiOnlyCaptions
     }));
     return res.end();
 
