@@ -302,7 +302,7 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 <body>
 
 <header>
-  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260430h</span></div>
+  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260430i</span></div>
   <div class="legend">
     <div class="legend-item"><div class="swatch" style="background:var(--surface2);border:1px solid var(--border)"></div>Host / narration</div>
     <div class="legend-item"><div class="swatch" style="background:var(--italic-bg);border:1px solid var(--italic-line)"></div>Quote / non-host (italic)</div>
@@ -884,34 +884,129 @@ function writeSRT(captions) {
 
 // ── RENDER ────────────────────────────────────────────────────────────────────
 
+let stage1Filter = 'all'; // 'all' | 'italic' | 'flagged' | 'warn'
+
+function getStage1Warnings(c) {
+  const warnings = [];
+  const durMs = (c.end || 0) - (c.start || 0);
+  if (durMs < 500) warnings.push('< 500ms');
+  if (Array.isArray(c.lines)) {
+    const longLine = c.lines.find(l => l.length > 30);
+    if (longLine) warnings.push('line > 30 chars');
+  }
+  return warnings;
+}
+
 function renderOutput() {
   const italics   = result.filter(c=>c.italic).length;
   const timing    = result.filter(c=>c.timingFlag).length;
   const overflows = result.filter(c=>c.flag).length;
   const flags     = timing + overflows;
+  const warnCount = result.filter(c => getStage1Warnings(c).length > 0).length;
 
   document.getElementById('output').innerHTML = `
     <div class="output-bar">
       <div class="output-stats">
         <span class="pill pill-g">${result.length} captions</span>
         <span class="pill pill-b">${italics} italic</span>
-        ${flags ? `<span class="pill pill-w">${flags} need timing review</span>` : ''}
+        ${flags ? `<span class="pill pill-w">${flags} flagged</span>` : ''}
+        ${warnCount ? `<span class="pill" style="background:#2a1000; color:var(--warn);">${warnCount} warn</span>` : ''}
+        <div class="preview-toolbar" style="margin-left:12px;">
+          <button class="filter-btn stage1-filter ${stage1Filter==='all'?'active':''}" data-filter="all">All</button>
+          <button class="filter-btn stage1-filter ${stage1Filter==='italic'?'active':''}" data-filter="italic">Italic</button>
+          <button class="filter-btn stage1-filter ${stage1Filter==='flagged'?'active':''}" data-filter="flagged">Flagged</button>
+          <button class="filter-btn stage1-filter ${stage1Filter==='warn'?'active':''}" data-filter="warn">Warnings</button>
+        </div>
       </div>
       <button class="btn-dl" onclick="dl()">↓ Download .srt</button>
     </div>
-    <div class="caption-scroll">
-      ${result.map(c => {
-        const flagNote = c.timingFlag
-          ? `<div class="flag-note">⚠ ${esc(c.timingFlag)}</div>`
-          : c.flag
-            ? `<div class="flag-note">⚠ ${esc(c.flag)}</div>`
-            : '';
-        return `<div class="cap-row ${c.italic?'ir':''}">
-          <div class="cap-time">${fmtTime(c.start).slice(0,8)}${flagNote}</div>
-          <div class="cap-body">${c.lines.map(esc).join('\n')}</div>
-        </div>`;
-      }).join('')}
-    </div>`;
+    <div class="caption-scroll" id="stage1-rows-container"></div>`;
+
+  // Wire up filter buttons
+  document.querySelectorAll('.stage1-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      stage1Filter = btn.dataset.filter;
+      renderOutput();
+    });
+  });
+
+  const container = document.getElementById('stage1-rows-container');
+  const filtered = result.filter(c => {
+    if (stage1Filter === 'all') return true;
+    if (stage1Filter === 'italic') return c.italic;
+    if (stage1Filter === 'flagged') return c.timingFlag || c.flag;
+    if (stage1Filter === 'warn') return getStage1Warnings(c).length > 0;
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="placeholder">No captions match this filter.</div>';
+  } else {
+    filtered.forEach((c, idx) => {
+      const row = document.createElement('div');
+      let cls = 'cap-row preview-row';
+      if (c.italic) cls += ' ir';
+      row.className = cls;
+      row.title = stage2Audio ? 'Click to play this caption\'s audio' : '';
+
+      const captionNum = c.index || (result.indexOf(c) + 1);
+      const startTime = fmtTime(c.start || 0);
+      const startDisplay = startTime.slice(0, 8) + '<span style="opacity:0.5;">' + startTime.slice(8) + '</span>';
+      const durSec = ((c.end || 0) - (c.start || 0)) / 1000;
+      const durStr = durSec.toFixed(durSec < 10 ? 2 : 1) + 's';
+      const durIsShort = durSec < 0.5;
+
+      let tagHtml = '';
+      if (c.timingFlag) {
+        const isNeeds = c.timingFlag.startsWith('Timing needs');
+        const tagCls = isNeeds ? 'final-tag delete' : 'final-tag whisper';
+        const label = isNeeds ? 'NEEDS' : 'ADJ';
+        tagHtml = '<span class="' + tagCls + '" title="' + esc(c.timingFlag) + '">' + label + '</span>';
+      }
+
+      const italicIcon = c.italic ? '<div class="cap-italic-icon">⟨italic⟩</div>' : '';
+
+      const timeCol = document.createElement('div');
+      timeCol.className = 'cap-time';
+      timeCol.innerHTML =
+        '<div class="cap-num">#' + captionNum + '</div>' +
+        '<div class="cap-time-main">' + startDisplay + '</div>' +
+        '<div class="cap-duration' + (durIsShort ? ' warn' : '') + '">' + durStr + '</div>' +
+        italicIcon +
+        (tagHtml ? '<div style="margin-top:4px;">' + tagHtml + '</div>' : '');
+
+      const bodyCol = document.createElement('div');
+      bodyCol.className = 'cap-body';
+      bodyCol.style.lineHeight = '1.65';
+      let bodyInner = renderLinesWithBreaks(c.lines || []);
+
+      // Inline flag/timingFlag notes
+      const noteText = c.timingFlag || c.flag;
+      if (noteText) {
+        bodyInner += '<div class="flag-note" style="margin-top:6px;">⚠ ' + esc(noteText) + '</div>';
+      }
+
+      // Length / duration warnings
+      const warnings = getStage1Warnings(c);
+      if (warnings.length) {
+        bodyInner += '<div style="margin-top:6px;">' +
+          warnings.map(w => '<span class="cap-warning">⚠ ' + esc(w) + '</span>').join('') +
+          '</div>';
+      }
+      bodyCol.innerHTML = bodyInner;
+
+      // Click to play (if audio uploaded for Stage 2)
+      row.addEventListener('click', () => {
+        if (stage2Audio) {
+          playCaptionAudio(c.start || 0, c.end || (c.start || 0) + 1000, row);
+        }
+      });
+
+      row.appendChild(timeCol);
+      row.appendChild(bodyCol);
+      container.appendChild(row);
+    });
+  }
 
   // Show Stage 2 UI
   showStage2();
