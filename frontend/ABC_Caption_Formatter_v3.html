@@ -139,6 +139,27 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 .final-tag.delete { background: #200a0a; color: #c04040; }
 .final-tag.other { background: var(--accent-dim); color: var(--accent); }
 
+/* Stage 3: enhanced preview */
+.cap-row.preview-row { grid-template-columns: 96px 1fr; cursor: pointer; transition: background 0.1s; }
+.cap-row.preview-row.audio-active { box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-dim) !important; }
+.cap-num { font-size: 9px; color: var(--muted); opacity: 0.6; letter-spacing: 0.5px; }
+.cap-time-main { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.cap-duration { font-size: 9px; color: var(--muted); opacity: 0.7; margin-top: 2px; }
+.cap-duration.warn { color: var(--warn); opacity: 1; }
+.cap-time-was { font-size: 9px; color: #0a8fa0; opacity: 0.8; margin-top: 1px; font-style: italic; }
+.cap-italic-icon { display: inline-block; font-size: 8px; color: #3a5888; opacity: 0.7; margin-top: 2px; letter-spacing: 0.3px; }
+.cap-line-break { display: inline-block; color: var(--muted); opacity: 0.35; font-size: 10px; margin: 0 4px; vertical-align: middle; user-select: none; }
+.cap-reason { margin-top: 6px; font-size: 10px; color: var(--muted); font-style: italic; opacity: 0.75; line-height: 1.5; padding-left: 8px; border-left: 2px solid var(--border); }
+.cap-warning { display: inline-block; padding: 1px 5px; border-radius: 2px; font-size: 9px; background: #2a1000; color: var(--warn); margin-left: 6px; }
+.cap-diff-add { background: rgba(85, 170, 102, 0.15); color: #7fdb95; padding: 0 2px; border-radius: 2px; }
+.cap-diff-del { background: rgba(192, 64, 64, 0.15); color: #d97f7f; text-decoration: line-through; padding: 0 2px; border-radius: 2px; opacity: 0.7; }
+.cap-diff-old { display: block; font-size: 11px; opacity: 0.6; line-height: 1.5; margin-bottom: 4px; }
+.cap-diff-new { display: block; line-height: 1.5; }
+.preview-toolbar { display: flex; gap: 4px; margin-right: 12px; }
+.filter-btn { background: var(--surface); border: 1px solid var(--border); color: var(--muted); padding: 4px 10px; border-radius: 3px; font-family: var(--mono); font-size: 10px; cursor: pointer; transition: all 0.1s; }
+.filter-btn:hover { color: var(--text); border-color: var(--accent-dim); }
+.filter-btn.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+
 /* ── EASTER EGG ──────────────────────────────────────────────────────── */
 #easter-egg {
   display: none;
@@ -281,7 +302,7 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 <body>
 
 <header>
-  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260430g</span></div>
+  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260430h</span></div>
   <div class="legend">
     <div class="legend-item"><div class="swatch" style="background:var(--surface2);border:1px solid var(--border)"></div>Host / narration</div>
     <div class="legend-item"><div class="swatch" style="background:var(--italic-bg);border:1px solid var(--italic-line)"></div>Quote / non-host (italic)</div>
@@ -386,7 +407,12 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
       <div class="output-stats">
         <span class="pill pill-g" id="final-caption-count"></span>
         <span class="pill" id="final-changed-count" style="background:#2a1e00; color:#c8910a;"></span>
-        <span style="font-family:var(--mono); font-size:10px; color:var(--muted);">· review then download</span>
+        <div class="preview-toolbar" style="margin-left:12px;">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="changed">AI changes</button>
+          <button class="filter-btn" data-filter="timing">Timing only</button>
+          <button class="filter-btn" data-filter="warn">Warnings</button>
+        </div>
       </div>
       <div style="display:flex; gap:8px; align-items:center;">
         <button class="btn-dl" id="btn-final-download-no-whisper" title="AI text edits, original Stage 1 timing — use if WhisperX timing changes look wrong">↓ AI text only</button>
@@ -394,6 +420,7 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
       </div>
     </div>
     <div id="final-preview-container" class="caption-scroll" style="max-height:480px;"></div>
+    <audio id="preview-audio" style="display:none;"></audio>
   </div>
 
 </div>
@@ -416,6 +443,9 @@ let stage2Accepted          = new Set(); // caption_index values user accepted
 let stage2Status            = 'idle'; // idle | suggesting | done | error
 let stage2FinalCaptions     = null;   // Final captions after timing fix, for download
 let stage2GeminiOnlyCaptions = null;  // AI text edits with original Stage 1 timing
+let previewFilter           = 'all';  // 'all' | 'changed' | 'timing' | 'warn'
+let previewAudioURL         = null;   // ObjectURL for stage2Audio
+let previewAudioTimer       = null;   // setTimeout id for stopping playback at end_ms
 const API_BASE_URL       = 'https://abc-captions.onrender.com'; // Point to live Render proxy
 const API_SECRET         = 'abc-captions-2026'; // Must match Render SHARED_SECRET
 
@@ -1051,6 +1081,10 @@ document.getElementById('btn-download-refined').addEventListener('click', () => 
 document.getElementById('btn-final-download').addEventListener('click', () => downloadFinalSRT());
 document.getElementById('btn-final-download-no-whisper').addEventListener('click', () => downloadGeminiOnlySRT());
 
+document.querySelectorAll('.preview-toolbar .filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => setPreviewFilter(btn.dataset.filter));
+});
+
 document.getElementById('btn-skip-refinement').addEventListener('click', () => {
   stage2Status = 'idle';
   stage2Suggestions = [];
@@ -1279,17 +1313,105 @@ async function downloadRefinedSRT() {
   }
 }
 
+// Word-level diff using simple LCS. Returns array of {type, text} where
+// type ∈ {'eq', 'add', 'del'} for assembling the inline diff.
+function wordDiff(oldText, newText) {
+  const tokenize = s => (s || '').split(/(\s+|[.,;:!?—–"'‘’“”…])/).filter(t => t !== '');
+  const a = tokenize(oldText);
+  const b = tokenize(newText);
+  // Build LCS table
+  const m = a.length, n = b.length;
+  const dp = Array.from({length: m + 1}, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  // Walk back to produce diff
+  const result = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) { result.unshift({type: 'eq', text: a[i - 1]}); i--; j--; }
+    else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) { result.unshift({type: 'add', text: b[j - 1]}); j--; }
+    else { result.unshift({type: 'del', text: a[i - 1]}); i--; }
+  }
+  return result;
+}
+
+function renderWordDiff(oldText, newText) {
+  const parts = wordDiff(oldText, newText);
+  return parts.map(p => {
+    const safe = esc(p.text);
+    if (p.type === 'eq') return safe;
+    if (p.type === 'add') return '<span class="cap-diff-add">' + safe + '</span>';
+    return '<span class="cap-diff-del">' + safe + '</span>';
+  }).join('');
+}
+
+// Render lines with a visible ↵ marker between line 1 and line 2
+function renderLinesWithBreaks(lines) {
+  return lines.map(l => esc(l)).join('<span class="cap-line-break">↵</span> ');
+}
+
+// Length / duration warnings per caption
+function getCaptionWarnings(c) {
+  const warnings = [];
+  const durMs = (c.end || 0) - (c.start || 0);
+  if (durMs < 500) warnings.push('< 500ms');
+  if (Array.isArray(c.lines)) {
+    const longLine = c.lines.find(l => l.length > 30);
+    if (longLine) warnings.push('line > 30 chars');
+  }
+  return warnings;
+}
+
+// Audio playback: play [start, end] from stage2Audio
+function playCaptionAudio(startMs, endMs, rowEl) {
+  const audio = document.getElementById('preview-audio');
+  if (!stage2Audio || !audio) return;
+  if (!previewAudioURL) {
+    previewAudioURL = URL.createObjectURL(stage2Audio);
+    audio.src = previewAudioURL;
+  }
+  // Clear previous active row
+  document.querySelectorAll('.cap-row.audio-active').forEach(r => r.classList.remove('audio-active'));
+  if (rowEl) rowEl.classList.add('audio-active');
+  if (previewAudioTimer) { clearTimeout(previewAudioTimer); previewAudioTimer = null; }
+  audio.pause();
+  audio.currentTime = Math.max(0, startMs / 1000);
+  audio.play().catch(err => console.warn('Audio play failed:', err));
+  const playMs = Math.max(200, endMs - startMs);
+  previewAudioTimer = setTimeout(() => {
+    audio.pause();
+    if (rowEl) rowEl.classList.remove('audio-active');
+    previewAudioTimer = null;
+  }, playMs + 100);
+}
+
+function setPreviewFilter(filter) {
+  previewFilter = filter;
+  document.querySelectorAll('.preview-toolbar .filter-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.filter === filter);
+  });
+  if (stage2FinalCaptions) renderFinalPreview(stage2FinalCaptions);
+}
+
 function renderFinalPreview(captions) {
   const changedGemini = captions.filter(c => c.changed).length;
   const changedWhisper = captions.filter(c => c.timing_changed && !c.changed).length;
+  const warnCount = captions.filter(c => getCaptionWarnings(c).length > 0).length;
 
   document.getElementById('final-caption-count').textContent =
     captions.length + ' caption' + (captions.length !== 1 ? 's' : '');
 
   const changedPill = document.getElementById('final-changed-count');
   const totalChanged = changedGemini + changedWhisper;
-  if (totalChanged > 0) {
-    changedPill.textContent = changedGemini + ' Gemini' + (changedWhisper ? ' · ' + changedWhisper + ' timing' : '') + ' changed';
+  if (totalChanged > 0 || warnCount > 0) {
+    const parts = [];
+    if (changedGemini) parts.push(changedGemini + ' AI');
+    if (changedWhisper) parts.push(changedWhisper + ' timing');
+    if (warnCount) parts.push(warnCount + ' warn');
+    changedPill.textContent = parts.join(' · ');
     changedPill.style.display = '';
   } else {
     changedPill.style.display = 'none';
@@ -1298,26 +1420,43 @@ function renderFinalPreview(captions) {
   const container = document.getElementById('final-preview-container');
   container.innerHTML = '';
 
-  captions.forEach((c, i) => {
+  // Apply filter
+  const filtered = captions.filter(c => {
+    if (previewFilter === 'all') return true;
+    if (previewFilter === 'changed') return c.changed;
+    if (previewFilter === 'timing') return c.timing_changed && !c.changed;
+    if (previewFilter === 'warn') return getCaptionWarnings(c).length > 0;
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="placeholder">No captions match this filter.</div>';
+    document.getElementById('stage3-preview').style.display = 'block';
+    return;
+  }
+
+  filtered.forEach(c => {
     const row = document.createElement('div');
     const isGemini = c.changed;
     const isWhisper = c.timing_changed && !c.changed;
-    let cls = 'cap-row';
+    let cls = 'cap-row preview-row';
     if (c.italic) cls += ' ir';
     if (isGemini) cls += ' changed-gemini';
     else if (isWhisper) cls += ' changed-whisper';
     row.className = cls;
-    row.style.display = 'grid';
-    row.style.gridTemplateColumns = '76px 1fr';
-    row.style.gap = '12px';
-    row.style.alignItems = 'start';
+    row.title = 'Click to play this caption\'s audio';
 
-    // Time & badge column
+    // ── Time & meta column ──
     const timeCol = document.createElement('div');
     timeCol.className = 'cap-time';
-    timeCol.style.display = 'flex';
-    timeCol.style.flexDirection = 'column';
-    timeCol.style.gap = '4px';
+
+    const captionNum = c.cap_index || c.index || '';
+    const startTime = fmtTime(c.start || 0).slice(0, 12); // HH:MM:SS,mmm
+    const startDisplay = startTime.slice(0, 8) + '<span style="opacity:0.5;">' + startTime.slice(8) + '</span>';
+    const durSec = ((c.end || 0) - (c.start || 0)) / 1000;
+    const durStr = durSec.toFixed(durSec < 10 ? 2 : 1) + 's';
+    const durIsShort = durSec < 0.5;
+
     let tagHtml = '';
     if (isGemini && c.change_type) {
       const ct = c.change_type;
@@ -1328,27 +1467,75 @@ function renderFinalPreview(captions) {
       else if (ct === 'split') tagCls += 'split';
       else if (ct === 'delete') tagCls += 'delete';
       else tagCls += 'other';
-      tagHtml = '<span class="' + tagCls + '" style="display:inline-block;">' + esc(ct) + '</span>';
+      const shortLabel = { phrase_break: 'BREAK', name_kept_together: 'NAME', merge: 'MERGE', split: 'SPLIT', delete: 'DEL' }[ct] || ct.toUpperCase();
+      tagHtml = '<span class="' + tagCls + '" title="' + esc(ct) + '">' + esc(shortLabel) + '</span>';
     } else if (isWhisper) {
-      tagHtml = '<span class="final-tag whisper" style="display:inline-block;">timing</span>';
+      tagHtml = '<span class="final-tag whisper">TIMING</span>';
     }
-    timeCol.innerHTML = fmtTime(c.start).slice(0, 8) + (tagHtml ? '<br>' + tagHtml : '');
 
-    // Body column
+    // Timing-was line for WhisperX-changed captions
+    let wasHtml = '';
+    if (isWhisper && typeof c.start === 'number') {
+      // origResult timing was spread onto c earlier as c.start originally — but we override start with new timing.
+      // We need to look up original start from result[]
+      const orig = result.find((r, idx) => (r.index || idx + 1) === c.cap_index);
+      if (orig && Math.abs(orig.start - c.start) > 50) {
+        const wasFmt = fmtTime(orig.start).slice(0, 12);
+        const delta = c.start - orig.start;
+        const sign = delta > 0 ? '+' : '';
+        wasHtml = '<div class="cap-time-was">was ' + wasFmt.slice(0, 8) + ' (' + sign + Math.round(delta) + 'ms)</div>';
+      }
+    }
+
+    const italicIcon = c.italic ? '<div class="cap-italic-icon">⟨italic⟩</div>' : '';
+
+    timeCol.innerHTML =
+      '<div class="cap-num">#' + captionNum + '</div>' +
+      '<div class="cap-time-main">' + startDisplay + '</div>' +
+      '<div class="cap-duration' + (durIsShort ? ' warn' : '') + '">' + durStr + '</div>' +
+      wasHtml +
+      italicIcon +
+      (tagHtml ? '<div style="margin-top:4px;">' + tagHtml + '</div>' : '');
+
+    // ── Body column ──
     const bodyCol = document.createElement('div');
     bodyCol.className = 'cap-body';
-    bodyCol.style.lineHeight = '1.5';
+    bodyCol.style.lineHeight = '1.65';
 
-    if (isGemini && c.original_text) {
-      // Show old → new
-      const oldLines = c.italic
-        ? '<span style="color:#854040;text-decoration:line-through;opacity:0.7;">' + esc(c.original_text) + '</span>'
-        : '<span style="color:#854040;text-decoration:line-through;opacity:0.7;">' + esc(c.original_text) + '</span>';
-      const newLines = c.lines.map(esc).join('\n');
-      bodyCol.innerHTML = oldLines + '\n' + newLines;
+    let bodyInner = '';
+    if (isGemini && c.original_text && c.lines && c.lines.length) {
+      // Word-level diff between original_text and final text
+      const newText = c.lines.join(' ');
+      const isDelete = c.change_type === 'delete' || !newText.trim();
+      if (isDelete) {
+        bodyInner = '<span class="cap-diff-old"><span class="cap-diff-del">' + esc(c.original_text) + '</span></span>' +
+                    '<span class="cap-diff-new" style="opacity:0.6;">[deleted]</span>';
+      } else {
+        const diffHtml = renderWordDiff(c.original_text, newText);
+        bodyInner = '<span class="cap-diff-new">' + renderLinesWithBreaks(c.lines) + '</span>' +
+                    '<div style="margin-top:6px; font-size:11px; opacity:0.85;">' + diffHtml + '</div>';
+      }
     } else {
-      bodyCol.textContent = c.lines.join('\n');
+      bodyInner = renderLinesWithBreaks(c.lines || []);
     }
+
+    // Warnings
+    const warnings = getCaptionWarnings(c);
+    if (warnings.length) {
+      bodyInner += '<div style="margin-top:6px;">' +
+        warnings.map(w => '<span class="cap-warning">⚠ ' + esc(w) + '</span>').join('') +
+        '</div>';
+    }
+
+    // Reason for AI changes
+    if (isGemini && c.reason) {
+      bodyInner += '<div class="cap-reason">' + esc(c.reason) + '</div>';
+    }
+
+    bodyCol.innerHTML = bodyInner;
+
+    // Click to play audio
+    row.addEventListener('click', () => playCaptionAudio(c.start || 0, c.end || (c.start || 0) + 1000, row));
 
     row.appendChild(timeCol);
     row.appendChild(bodyCol);
@@ -1422,6 +1609,9 @@ function showStage2() {
   document.getElementById('stage3-preview').style.display = 'none';
   stage2FinalCaptions = null;
   stage2GeminiOnlyCaptions = null;
+  if (previewAudioURL) { URL.revokeObjectURL(previewAudioURL); previewAudioURL = null; }
+  if (previewAudioTimer) { clearTimeout(previewAudioTimer); previewAudioTimer = null; }
+  previewFilter = 'all';
 }
 
 // ── EASTER EGG ───────────────────────────────────────────────────────────────
