@@ -254,7 +254,7 @@ ${JSON.stringify(captions.map(c => {
             { text: geminiPrompt }
           ]
         }],
-        generationConfig: { temperature: 0.2 }
+        generationConfig: { temperature: 0.2, maxOutputTokens: 32768 }
       };
 
       // Try models in order, falling back on 503/UNAVAILABLE
@@ -287,7 +287,36 @@ ${JSON.stringify(captions.map(c => {
         const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
         console.log('Gemini response (first 500 chars):', responseText.substring(0, 500));
         const jsonMatch = responseText.match(/\[[\s\S]*\]/);
-        suggestions = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(responseText);
+        try {
+          suggestions = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(responseText);
+        } catch (parseErr) {
+          // Salvage: response was likely truncated. Extract complete top-level
+          // {...} objects by tracking brace depth, ignoring braces inside strings.
+          console.warn(`Primary parse failed (${parseErr.message}); attempting salvage.`);
+          const salvaged = [];
+          const src = responseText;
+          let depth = 0, start = -1, inStr = false, esc = false;
+          for (let i = 0; i < src.length; i++) {
+            const ch = src[i];
+            if (inStr) {
+              if (esc) { esc = false; continue; }
+              if (ch === '\\') { esc = true; continue; }
+              if (ch === '"') inStr = false;
+              continue;
+            }
+            if (ch === '"') { inStr = true; continue; }
+            if (ch === '{') { if (depth === 0) start = i; depth++; }
+            else if (ch === '}') {
+              depth--;
+              if (depth === 0 && start !== -1) {
+                try { salvaged.push(JSON.parse(src.slice(start, i + 1))); } catch (_) {}
+                start = -1;
+              }
+            }
+          }
+          suggestions = salvaged;
+          console.log(`Salvaged ${salvaged.length} suggestions from truncated response.`);
+        }
       } catch (e) {
         console.warn(`Could not parse Gemini suggestions: ${e.message}`);
         suggestions = [];
