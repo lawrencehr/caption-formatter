@@ -231,7 +231,8 @@ ${JSON.stringify(captions.map(c => {
   const spokenLines = nameTagMatch ? lines.slice(1) : lines;
   const lineTooLong = spokenLines.some(l => l.trim().length > 30);
   // Only send timing flags that represent real problems Gemini must address.
-  // "Timing adjusted — …" flags are auto-handled by Stage 1 and don't need AI attention.
+  // "Timing adjusted — …" flags indicate Stage 1 already modified timing and don't need AI to rewrite text,
+  // but they DO need WhisperX retiming (handled separately).
   const realTimingFlag = c.timingFlag && c.timingFlag.startsWith('Timing needs') ? c.timingFlag : null;
   const entry = {
     index: c.index,
