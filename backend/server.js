@@ -292,7 +292,9 @@ ${JSON.stringify(captions.map(c => {
         } catch (parseErr) {
           // Salvage: response was likely truncated. Extract complete top-level
           // {...} objects by tracking brace depth, ignoring braces inside strings.
-          console.warn(`Primary parse failed (${parseErr.message}); attempting salvage.`);
+          const finishReason = geminiData.candidates?.[0]?.finishReason;
+          console.warn(`[/api/refine] Primary parse failed (${parseErr.message}). FinishReason: ${finishReason}. Attempting salvage...`);
+          
           const salvaged = [];
           const src = responseText;
           let depth = 0, start = -1, inStr = false, esc = false;
@@ -315,7 +317,7 @@ ${JSON.stringify(captions.map(c => {
             }
           }
           suggestions = salvaged;
-          console.log(`Salvaged ${salvaged.length} suggestions from truncated response.`);
+          console.log(`[/api/refine] Salvaged ${salvaged.length} suggestions from incomplete response.`);
         }
       } catch (e) {
         console.warn(`Could not parse Gemini suggestions: ${e.message}`);
