@@ -479,8 +479,13 @@ ${JSON.stringify(captions.map(c => {
           const numTokens = Math.max(tokens.length, 1);
           const capWords = words.slice(wordPos, wordPos + numTokens);
           wordPos += numTokens;
+          // Subtract a small offset from word starts: wav2vec2 anchors to vowel/energy
+          // onset rather than consonant onset, so start_ms is typically 80-120ms late.
+          // This corrects within-chain transitions (caption N end = caption N+1 start_ms)
+          // which otherwise stay on screen through the early consonants of the next caption.
+          const WORD_START_OFFSET_MS = 100;
           capWordBuckets.push(capWords.length > 0
-            ? { capIndex: cap.index, startMs: capWords[0].start_ms, endWords: capWords[capWords.length - 1].end_ms }
+            ? { capIndex: cap.index, startMs: Math.max(0, capWords[0].start_ms - WORD_START_OFFSET_MS), endWords: capWords[capWords.length - 1].end_ms }
             : null);
         }
 
