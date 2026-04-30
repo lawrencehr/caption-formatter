@@ -281,7 +281,7 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 <body>
 
 <header>
-  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260430d</span></div>
+  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260430e</span></div>
   <div class="legend">
     <div class="legend-item"><div class="swatch" style="background:var(--surface2);border:1px solid var(--border)"></div>Host / narration</div>
     <div class="legend-item"><div class="swatch" style="background:var(--italic-bg);border:1px solid var(--italic-line)"></div>Quote / non-host (italic)</div>
@@ -502,6 +502,20 @@ function parseTranscript(html) {
 // shared vocabulary (e.g. "battery", "cobalt" appearing in both host and quotes).
 
 function buildIndex(segs) { return segs; } // now an array, not a joined string
+
+// Re-derive italic from bold segments — used post-AI to correct flags after text redistribution.
+// Mirrors Stage 1 logic: speaker detection first, then boldSegments text matching.
+function deriveItalic(text) {
+  if (!text || !text.trim()) return false;
+  const segs = boldSegments;
+  const spk = detectSpeaker(text);
+  if (spk) {
+    const isNonHost = shouldBeItalic(spk.name, segs) || shouldBeItalic(spk.rest, segs);
+    if (isNonHost) return true;
+    return shouldBeItalic(spk.rest, segs);
+  }
+  return shouldBeItalic(text, segs);
+}
 
 function shouldBeItalic(text, segs) {
   if (!segs || !segs.length || !text) return false;
@@ -1211,20 +1225,21 @@ async function downloadRefinedSRT() {
     if (data.status === 'error') throw new Error(data.error || 'Refinement failed');
 
     // Convert API captions to writeSRT format.
-    // Unchanged captions reuse their Stage 1 line split (already correct).
-    // Changed captions run splitLines() on the new Gemini text.
+    // Re-derive italic from boldSegments on every caption — this corrects cases where
+    // Gemini moved text across italic boundaries and the inherited flag was wrong.
+    // Always re-run splitLines so line breaks reflect the final (possibly redistributed) text.
     stage2FinalCaptions = data.captions.map(c => {
       const origResult = result.find((r, i) => (r.index || i + 1) === c.index) || {};
-      const lines = c.changed
-        ? splitLines(c.text || '')
-        : (origResult.lines && origResult.lines.length ? origResult.lines : splitLines(c.text || ''));
+      const text = c.text || '';
+      const italic = deriveItalic(text);
+      const lines = splitLines(text);
       const timingChanged = !c.changed &&
         (Math.abs((c.start_ms || 0) - (origResult.start || 0)) > 50 ||
          Math.abs((c.end_ms || 0) - (origResult.end || 0)) > 50);
       return {
         ...origResult,
         lines,
-        italic: c.italic,
+        italic,
         start: c.start_ms,
         end: c.end_ms,
         changed: c.changed,
