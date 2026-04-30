@@ -281,7 +281,7 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 <body>
 
 <header>
-  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260430b</span></div>
+  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260430c</span></div>
   <div class="legend">
     <div class="legend-item"><div class="swatch" style="background:var(--surface2);border:1px solid var(--border)"></div>Host / narration</div>
     <div class="legend-item"><div class="swatch" style="background:var(--italic-bg);border:1px solid var(--italic-line)"></div>Quote / non-host (italic)</div>
@@ -672,13 +672,13 @@ function preprocessMidSpeakers(captions) {
       if (mid.rest.trim()) {
         // MIDDLE: move "before" to prev, keep "SPEAKER: quote"
         cap.text = `${mid.speaker}: ${mid.rest}`.trim();
-        cap.timingFlag = 'Timing adjusted — leading text moved to previous caption';
+        cap.timingFlag = 'Timing needs — leading text moved to previous caption';
         if (i > 0) {
           const combined = `${caps[i - 1].text} ${mid.before}`.replace(/\s+/g, ' ').trim();
           caps[i - 1].text = combined;
           caps[i - 1].timingFlag = combined.length > 60
             ? '⚠ Line too long after merge — split manually in Premiere'
-            : 'Timing adjusted — text moved from next caption';
+            : 'Timing needs — text moved from next caption';
         }
       } else {
         // END: keep "before", push label to next
@@ -799,9 +799,9 @@ function processCaptions(captions, boldIdx) {
             const prev = out[out.length - 1];
             const lastLine = prev.lines[prev.lines.length - 1] || '';
             prev.lines[prev.lines.length - 1] = (lastLine + ' ' + leadIn.leadIn).trim();
-            prev.timingFlag = 'Timing adjusted — lead-in moved from next caption';
+            prev.timingFlag = 'Timing needs — lead-in moved from next caption';
             const o = { start:cap.start, end:cap.end, lines:splitLines(leadIn.rest), italic:true };
-            o.timingFlag = 'Timing adjusted — lead-in moved to previous caption';
+            o.timingFlag = 'Timing needs — lead-in moved to previous caption';
             out.push(o);
           } else {
             out.push({ start:cap.start, end:cap.end, lines:splitLines(cap.text), italic:true });
