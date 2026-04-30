@@ -119,6 +119,7 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 .diff-body { padding: 9px 16px; line-height: 1.7; }
 .diff-before { color: #c04040; text-decoration: line-through; opacity: 0.8; white-space: pre-wrap; }
 .diff-after { color: var(--accent); white-space: pre-wrap; margin-top: 4px; }
+.diff-reason { margin-top: 6px; font-size: 10px; color: var(--muted); font-style: italic; opacity: 0.8; }
 .diff-tag { display: inline-block; padding: 1px 5px; border-radius: 2px; font-size: 9px; background: var(--accent-dim); color: var(--accent); margin-top: 3px; }
 
 /* ── STAGE 3 PREVIEW ─────────────────────────────────────────────────── */
@@ -280,7 +281,7 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 <body>
 
 <header>
-  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260430a</span></div>
+  <div class="logo">ABC CAPTION FORMATTER <em>v3 · sunrise</em> <span style="font-size:0.6em;opacity:0.4;margin-left:0.5em">build 20260430b</span></div>
   <div class="legend">
     <div class="legend-item"><div class="swatch" style="background:var(--surface2);border:1px solid var(--border)"></div>Host / narration</div>
     <div class="legend-item"><div class="swatch" style="background:var(--italic-bg);border:1px solid var(--italic-line)"></div>Quote / non-host (italic)</div>
@@ -1150,9 +1151,13 @@ function renderDiffView() {
     // Body column
     const bodyCol = document.createElement('div');
     bodyCol.className = 'diff-body';
+    const reasonHtml = sug.reason
+      ? '<div class="diff-reason">' + esc(sug.reason) + '</div>'
+      : '';
     bodyCol.innerHTML =
       '<div class="diff-before">- ' + esc(originalCap.text) + '</div>' +
-      '<div class="diff-after">+ ' + esc(sug.new_text || '') + '</div>';
+      '<div class="diff-after">+ ' + esc(sug.new_text || '') + '</div>' +
+      reasonHtml;
 
     row.appendChild(chkCol);
     row.appendChild(metaCol);
@@ -1279,7 +1284,7 @@ function renderFinalPreview(captions) {
     else if (isWhisper) cls += ' changed-whisper';
     row.className = cls;
     row.style.display = 'grid';
-    row.style.gridTemplateColumns = '76px 1fr 200px';
+    row.style.gridTemplateColumns = '76px 1fr';
     row.style.gap = '12px';
     row.style.alignItems = 'start';
 
@@ -1321,19 +1326,8 @@ function renderFinalPreview(captions) {
       bodyCol.textContent = c.lines.join('\n');
     }
 
-    // Reason column
-    const reasonCol = document.createElement('div');
-    reasonCol.className = 'cap-reason';
-    reasonCol.style.fontSize = '11px';
-    reasonCol.style.color = 'var(--muted)';
-    reasonCol.style.fontFamily = 'var(--mono)';
-    reasonCol.style.lineHeight = '1.4';
-    reasonCol.textContent = (c.reason || '—').substring(0, 150) + (c.reason && c.reason.length > 150 ? '…' : '');
-    reasonCol.title = c.reason || '';
-
     row.appendChild(timeCol);
     row.appendChild(bodyCol);
-    row.appendChild(reasonCol);
     container.appendChild(row);
   });
 

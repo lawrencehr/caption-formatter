@@ -230,11 +230,14 @@ ${JSON.stringify(captions.map(c => {
   // Check if any spoken line (skip name tag line) exceeds 30 chars
   const spokenLines = nameTagMatch ? lines.slice(1) : lines;
   const lineTooLong = spokenLines.some(l => l.trim().length > 30);
+  // Only send timing flags that represent real problems Gemini must address.
+  // "Timing adjusted — …" flags are auto-handled by Stage 1 and don't need AI attention.
+  const realTimingFlag = c.timingFlag && c.timingFlag.startsWith('Timing needs') ? c.timingFlag : null;
   const entry = {
     index: c.index,
     text: c.text,
     italic: c.italic,
-    timing_flag: c.timingFlag || null,
+    ...(realTimingFlag ? { timing_flag: realTimingFlag } : {}),
   };
   if (lineTooLong) {
     entry.line_too_long = true;
@@ -550,26 +553,28 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, timingCaptions,
   // of consecutive captions, it sometimes forgets to issue a suggestion for the
   // last "donor" caption — leaving its original text as a duplicate of what the
   // previous (changed) caption already absorbed. Detect & drop those donors.
+  // Window-based: check within ±8 captions, not just adjacent pairs.
   const normalizeForCompare = s => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const DEDUP_WINDOW = 8;
   const dedupFlags = new Array(surviving.length).fill(false);
-  for (let i = 0; i < surviving.length - 1; i++) {
-    const curr = surviving[i];
-    const next = surviving[i + 1];
-    if (!curr.changed || next.changed) continue;
-    const currNorm = normalizeForCompare(curr.text);
-    const nextNorm = normalizeForCompare(next.text);
-    if (nextNorm.length < 4) continue; // ignore trivially short
-    if (currNorm.includes(nextNorm)) dedupFlags[i + 1] = true;
-  }
-  // Reverse direction: changed caption fully contained inside an unchanged neighbour above
-  for (let i = 1; i < surviving.length; i++) {
-    const prev = surviving[i - 1];
-    const curr = surviving[i];
-    if (!curr.changed || prev.changed || dedupFlags[i - 1]) continue;
-    const prevNorm = normalizeForCompare(prev.text);
-    const currNorm = normalizeForCompare(curr.text);
-    if (currNorm.length < 4) continue;
-    if (prevNorm.includes(currNorm)) dedupFlags[i - 1] = true;
+  for (let i = 0; i < surviving.length; i++) {
+    if (!surviving[i].changed || dedupFlags[i]) continue;
+    const changedNorm = normalizeForCompare(surviving[i].text);
+    if (changedNorm.length < 4) continue;
+    // Forward window: unchanged captions whose text is fully contained in this changed caption
+    for (let j = i + 1; j <= Math.min(i + DEDUP_WINDOW, surviving.length - 1); j++) {
+      if (surviving[j].changed || dedupFlags[j]) continue;
+      const uncNorm = normalizeForCompare(surviving[j].text);
+      if (uncNorm.length < 4) continue;
+      if (changedNorm.includes(uncNorm)) dedupFlags[j] = true;
+    }
+    // Backward window: unchanged captions above whose text is fully contained in this changed caption
+    for (let j = i - 1; j >= Math.max(0, i - DEDUP_WINDOW); j--) {
+      if (surviving[j].changed || dedupFlags[j]) continue;
+      const uncNorm = normalizeForCompare(surviving[j].text);
+      if (uncNorm.length < 4) continue;
+      if (changedNorm.includes(uncNorm)) dedupFlags[j] = true;
+    }
   }
   if (dedupFlags.some(Boolean)) {
     surviving = surviving.filter((_, i) => !dedupFlags[i]);
