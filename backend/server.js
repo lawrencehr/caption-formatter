@@ -348,7 +348,7 @@ ${JSON.stringify(captions.map(c => {
       ...captions.filter(c => c.timingFlag && c.timingFlag.startsWith('Timing needs')).map(c => c.index)
     ]);
 
-    const BOUNDARY_BUFFER_MS = 500;
+    const BOUNDARY_BUFFER_MS = 3000; // Increased to 3s to handle phrases moving between captions
 
     const resolveText = (cap, suggestion) => {
       if (!suggestion) return cap.text;
