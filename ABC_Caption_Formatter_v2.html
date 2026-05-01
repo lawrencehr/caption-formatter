@@ -590,7 +590,7 @@ function preprocessMidSpeakers(captions) {
       const ellipsis = ellipsisM[2].trim();
       const after    = ellipsisM[3].trim();
       cap.text = before + ':';
-      cap.timingFlag = '⚠ Timing needs — ellipsis pushed to next caption';
+      cap.timingFlag = 'Timing needs — ellipsis pushed to next caption';
       if (i + 1 < caps.length) {
         const toAppend = after ? `${ellipsis} ${after}` : ellipsis;
         const combined = `${toAppend} ${caps[i + 1].text}`.trim();

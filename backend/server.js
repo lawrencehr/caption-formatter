@@ -166,6 +166,7 @@ PRIORITISE:
 - Caption breaks that fall mid-phrase or mid-thought when the audio has a natural pause elsewhere
 - Captions that combine end-of-one-thought + start-of-another (should split)
 - Single-word captions that feel abrupt (should be merged)
+- Captions flagged with line_too_long: true (must redistribute or split)
 
 CRITICAL RULES FOR MOVING TEXT:
 1. If you move words from one caption to another, you MUST return an update for BOTH captions to prevent duplicating text!
@@ -218,7 +219,7 @@ LINE LENGTH RULE:
 Each caption is displayed on up to 2 lines, max 30 characters per line (60 total for normal captions).
 Captions with a speaker name tag (e.g. "JOHN SMITH:") always use the first line for the name tag, leaving only the second line for spoken text.
 For these, effective_max_chars = 60 - length of the name tag line.
-If a caption has line_too_long: true, the current text overflows — you MUST suggest a redistribution of words with neighbouring captions so the spoken text fits within effective_max_chars total characters.
+If a caption has line_too_long: true, the current text overflows — you MUST suggest a redistribution of words with neighbouring captions so the spoken text fits within effective_max_chars total characters. If redistribution is impossible (e.g. due to name tags or italic boundaries), you should SPLIT the caption into two separate captions.
 Write new_text as a flat string with NO line breaks — the formatter will split it automatically.
 
 SINGLE WORD RULE:
@@ -357,7 +358,7 @@ ${JSON.stringify(captions.map(c => {
     const isChangedSet = new Set(acceptedSuggestions.map(s => s.caption_index));
     // Also mark captions with "Timing needs" flags for alignment (even without suggestions)
     for (const cap of captions) {
-      if (cap.timingFlag && cap.timingFlag.startsWith('Timing needs')) {
+      if (cap.timingFlag && (cap.timingFlag.includes('Timing needs') || cap.timingFlag.includes('Line too long'))) {
         isChangedSet.add(cap.index);
       }
     }
