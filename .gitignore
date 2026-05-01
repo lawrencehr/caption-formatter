@@ -7,6 +7,13 @@ whisperx-server/venv/
 __pycache__/
 *.py[cod]
 
+# Secrets — never commit these
+frontend/config.js
+**/.env
+
+# Runtime
+backend/temp/
+
 # OS
 .DS_Store
 Thumbs.db

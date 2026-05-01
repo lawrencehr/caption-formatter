@@ -136,6 +136,10 @@ app.post('/api/refine', async (req, res) => {
 
     const audioFile = req.files.audio;
     const audioBuffer = fs.readFileSync(audioFile.tempFilePath);
+    // Delete temp file immediately — buffer is in memory, disk copy no longer needed
+    fs.unlink(audioFile.tempFilePath, err => {
+      if (err) console.error('[cleanup] Failed to delete temp file:', err.message);
+    });
     const audioBase64 = audioBuffer.toString('base64');
     const audioFormat = audioFile.mimetype.includes('mp3') ? 'mp3' :
                         audioFile.mimetype.includes('wav') ? 'wav' : 'm4a';

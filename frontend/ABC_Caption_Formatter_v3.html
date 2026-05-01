@@ -425,6 +425,7 @@ header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: fl
 
 </div>
 
+<script src="config.js"></script>
 <script>
 'use strict';
 
@@ -446,9 +447,6 @@ let stage2GeminiOnlyCaptions = null;  // AI text edits with original Stage 1 tim
 let previewFilter           = 'all';  // 'all' | 'changed' | 'timing' | 'warn'
 let previewAudioURL         = null;   // ObjectURL for stage2Audio
 let previewAudioTimer       = null;   // setTimeout id for stopping playback at end_ms
-const API_BASE_URL       = 'https://abc-captions.onrender.com'; // Point to live Render proxy
-const API_SECRET         = 'abc-captions-2026'; // Must match Render SHARED_SECRET
-
 // ── UTILITIES ─────────────────────────────────────────────────────────────────
 
 function normalize(t) {
@@ -551,6 +549,7 @@ function deriveItalic(text) {
   return shouldBeItalic(text, segs);
 }
 
+// Returns true if text matches a bold segment from the DOCX — short captions require exact substring match, longer need 3+ consecutive words.
 function shouldBeItalic(text, segs) {
   if (!segs || !segs.length || !text) return false;
   const norm = normalize(text);
@@ -613,6 +612,7 @@ function detectSpeaker(text) {
 // e.g. "250,000" or "250, 000" should not break at the comma
 const BREAK_RE = /(?<!\d),(?!\s*\d)|[;:]|[—–]/g;
 
+// Splits caption text into ≤2 lines of ≤30 chars each, preferring punctuation break points over mid-word splits.
 function splitLines(text) {
   text = text.trim();
   if (!text) return [];
@@ -785,6 +785,7 @@ function detectTrailingPlain(text, boldIdx) {
 
 // ── MAIN PROCESSING ───────────────────────────────────────────────────────────
 
+// Applies Stage 1 formatting to all captions: italic flags, speaker label placement, line splitting, and timing conflict flags.
 function processCaptions(captions, boldIdx) {
   const caps = preprocessMidSpeakers(captions);
   const out = [];
@@ -873,6 +874,7 @@ function processCaptions(captions, boldIdx) {
 
 // ── WRITE SRT ─────────────────────────────────────────────────────────────────
 
+// Serialises caption array to SRT string, wrapping italic captions in <i> tags.
 function writeSRT(captions) {
   return captions.map((c,i) => {
     const body = c.italic
@@ -1359,13 +1361,16 @@ async function downloadRefinedSRT() {
     if (data.status === 'error') throw new Error(data.error || 'Refinement failed');
 
     // Convert API captions to writeSRT format.
-    // Re-derive italic from boldSegments on every caption — this corrects cases where
-    // Gemini moved text across italic boundaries and the inherited flag was wrong.
     // Always re-run splitLines so line breaks reflect the final (possibly redistributed) text.
+    // Converts an API response caption to writeSRT format, deriving italic and splitting lines.
     const mapApiCaption = (c, withTimingDiff) => {
       const origResult = result.find((r, i) => (r.index || i + 1) === c.index) || {};
       const text = c.text || '';
-      const italic = deriveItalic(text);
+      // Unchanged captions: trust Stage 1's italic flag (computed with full paragraph context).
+      // Changed captions: re-derive from boldSegments since text may have shifted boundaries.
+      const italic = (!c.changed && origResult.italic !== undefined)
+        ? origResult.italic
+        : deriveItalic(text);
       const lines = splitLines(text);
       const timingChanged = withTimingDiff && !c.changed &&
         (Math.abs((c.start_ms || 0) - (origResult.start || 0)) > 50 ||
