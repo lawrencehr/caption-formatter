@@ -175,15 +175,15 @@ Never suggest changes that would merge text across italic/non-italic boundaries.
 - If caption N is italic and caption N+1 is not italic (or vice versa), do NOT move text between them.
 - Each caption must be entirely italic or entirely non-italic.
 
-LINE LENGTH GUIDELINE:
-Ideally, each caption fits on up to 2 lines, max 30 characters per line (60 total).
-- If a caption has line_too_long: true, you SHOULD try to redistribute words with neighbors to fix the overflow.
-- HOWEVER, do not violate the Name Tag Rule or Italic Boundary Rule to fix line length.
-- If redistribution is impossible, you may suggest SPLITTING the caption into two separate captions.
-- Write new_text as a flat string with NO line breaks — the formatter will split it automatically.
+LINE LENGTH RULE (CRITICAL):
+Each caption is displayed on exactly 2 lines, max 30 characters per line (60 characters total).
+- You MUST ENSURE that your suggested new_text fits within the provided effective_max_chars (usually 60, but less if a name tag is present).
+- If a caption is flagged with line_too_long: true, you MUST fix the overflow.
+- If you cannot move words to a neighbor (because of name tags or italic boundaries), you MUST SPLIT the caption into two separate captions instead.
+- NO suggested caption should ever exceed 60 characters total.
 
 SINGLE WORD RULE:
-Avoid captions that contain only a single word unless it is a significant exclamation or the start of a new speaker. Merge single-word captions into the preceding or following caption where possible, provided it doesn't violate more important rules.
+Avoid captions that contain only a single word unless it is a significant exclamation or the start of a new speaker. Merge single-word captions into the preceding or following caption where possible, provided it doesn't violate the Line Length Rule.
 
 CRITICAL RULES FOR MOVING TEXT:
 1. If you move words from one caption to another, you MUST return an update for BOTH captions to prevent duplicating text!
