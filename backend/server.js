@@ -168,6 +168,7 @@ You MUST NOT edit, rephrase, or omit any words from the original captions. Your 
 
 PRIORITISE:
 - Captions flagged with "⚠" — these are known to have timing issues
+- Abnormally short captions (e.g. 1-2 words) — merge these with neighbors to improve flow unless they are name tags or represent significant dramatic pauses.
 - Captions where a person's name is split across two captions
 - Caption breaks that fall mid-phrase or mid-thought when the audio has a natural pause elsewhere
 - Captions that combine end-of-one-thought + start-of-another (should split)
@@ -219,18 +220,23 @@ ${JSON.stringify(captions.map(c => {
   const nameTagMatch = lines[0] && NAME_TAG_RE.test(lines[0].trim());
   const nameTagLen = nameTagMatch ? lines[0].trim().length : 0;
   const effectiveMax = nameTagMatch ? 60 - nameTagLen : 60;
+  
+  // Word count check for "short" captions (excluding name tags)
+  const cleanText = (c.text || '').replace(NAME_TAG_RE, '').trim();
+  const wordCount = cleanText ? cleanText.split(/\s+/).length : 0;
+  const isShort = wordCount > 0 && wordCount <= 2 && !nameTagMatch;
+
   // Check if any spoken line (skip name tag line) exceeds 30 chars
   const spokenLines = nameTagMatch ? lines.slice(1) : lines;
   const lineTooLong = spokenLines.some(l => l.trim().length > 30);
-  // Only send timing flags that represent real problems Gemini must address.
-  // "Timing adjusted — …" flags indicate Stage 1 already modified timing and don't need AI to rewrite text,
-  // but they DO need WhisperX retiming (handled separately).
+  
   const realTimingFlag = c.timingFlag && c.timingFlag.startsWith('Timing needs') ? c.timingFlag : null;
   const entry = {
     index: c.index,
     text: c.text,
     italic: c.italic,
     ...(realTimingFlag ? { timing_flag: realTimingFlag } : {}),
+    ...(isShort ? { is_short: true } : {}),
   };
   if (lineTooLong) {
     entry.line_too_long = true;
