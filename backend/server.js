@@ -354,7 +354,7 @@ ${JSON.stringify(captions.map(c => {
       ...captions.filter(c => c.timingFlag && c.timingFlag.startsWith('Timing needs')).map(c => c.index)
     ]);
 
-    const BOUNDARY_BUFFER_MS = 2500;
+    const BOUNDARY_BUFFER_MS = 1000;
 
     const resolveText = (cap, suggestion) => {
       if (!suggestion) return cap.text;
@@ -388,8 +388,7 @@ ${JSON.stringify(captions.map(c => {
       // Expand the window for WhisperX.
       const buffer = BOUNDARY_BUFFER_MS;
       const windowStart = Math.max(0, (cap.start_ms || 0) - buffer);
-      // Ensure the window has at least 5s of duration to capture long phrases
-      const windowEnd = Math.max(windowStart + 5000, (cap.end_ms || (cap.start_ms || 0) + 2000) + buffer);
+      const windowEnd = (cap.end_ms || (cap.start_ms || 0) + 2000) + buffer;
 
       textForAlignment.push({
         index: cap.index,
@@ -597,7 +596,7 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
 
     // Clamp overlaps sequentially
     const MAX_OVERLAP_MS = 100;
-    const MIN_DURATION_MS = 400;
+    const MIN_DURATION_MS = 500;
     for (let i = 1; i < surviving.length; i++) {
       if (surviving[i].start_ms < (surviving[i - 1].end_ms - MAX_OVERLAP_MS)) {
         surviving[i].start_ms = surviving[i - 1].end_ms;
