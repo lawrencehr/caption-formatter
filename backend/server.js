@@ -572,19 +572,22 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
   }
 
   // Clamp overlaps — preserve original text order, never sort by timestamp.
+  // We allow a tiny overlap (50ms) to prevent aggressive sequential clamping 
+  // from pushing the entire file late if there are many near-simultaneous words.
+  const MAX_OVERLAP_MS = 50;
   for (let i = 1; i < surviving.length; i++) {
-    if (surviving[i].start_ms < surviving[i - 1].end_ms) {
+    if (surviving[i].start_ms < (surviving[i - 1].end_ms - MAX_OVERLAP_MS)) {
       surviving[i].start_ms = surviving[i - 1].end_ms;
     }
     if (surviving[i].end_ms <= surviving[i].start_ms) {
-      surviving[i].end_ms = surviving[i].start_ms + 500;
+      surviving[i].end_ms = surviving[i].start_ms + 400;
     }
   }
 
-  // Snap-to-next: close small gaps (< 500ms) between adjacent captions.
+  // Snap-to-next: close small gaps between adjacent captions.
   // Within-chain gaps are already eliminated by the word-boundary assignment above;
   // this handles residual gaps at chain/unchanged boundaries and Stage 1 captions.
-  const SNAP_THRESHOLD_MS = 1000;
+  const SNAP_THRESHOLD_MS = 500; // Reduced from 1000ms to prevent sluggish feel
   for (let i = 0; i < surviving.length - 1; i++) {
     const gap = surviving[i + 1].start_ms - surviving[i].end_ms;
     if (gap > 0 && gap < SNAP_THRESHOLD_MS) {
@@ -592,7 +595,7 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
     }
   }
 
-  return surviving.map((c, i) => ({ ...c, index: i + 1 }));
+  return surviving;
 }
 
 app.get('/', (req, res) => res.send('ABC Caption Proxy — OK'));

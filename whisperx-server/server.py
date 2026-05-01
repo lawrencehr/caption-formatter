@@ -168,38 +168,43 @@ async def align_captions(request: AlignRequest):
     return StreamingResponse(generate(), media_type="application/json")
 
 def _build_output(captions: List[CaptionInput], segments: list) -> list:
-    # Flatten all words from all returned segments.
-    # This solves the issue where WhisperX fragments one input segment into multiple output segments.
-    all_words = []
-    for seg in segments:
-        for w in seg.get("words", []):
-            if "start" in w and "end" in w:
-                all_words.append({
-                    "word": w.get("word", "").strip(),
-                    "start_ms": int(w["start"] * 1000),
-                    "end_ms": int(w["end"] * 1000),
-                })
-
-    def tokenize(text):
-        import re
-        return re.findall(r'\w+', text.lower())
-
+    """
+    Maps WhisperX output segments back to the input captions.
+    Since we use forced alignment, segments should generally match 1-to-1.
+    """
     output = []
-    word_idx = 0
-    for cap in captions:
-        tokens = tokenize(cap.text)
-        num_tokens = len(tokens)
-        
-        # Take the next N words that match our token count
-        cap_words = all_words[word_idx : word_idx + num_tokens]
-        word_idx += num_tokens
+    
+    # Use a dictionary to map segments by their text if possible, 
+    # but since we send them in order, index-based mapping is most reliable for forced alignment.
+    for i, cap in enumerate(captions):
+        # Default to original timing if alignment fails for this segment
+        start_ms = cap.start_ms or 0
+        end_ms = cap.end_ms or (start_ms + 2000)
+        cap_words = []
 
-        if cap_words:
-            start_ms = cap_words[0]["start_ms"]
-            end_ms = cap_words[-1]["end_ms"]
-        else:
-            start_ms = cap.start_ms or 0
-            end_ms = cap.end_ms or (start_ms + 2000)
+        if i < len(segments):
+            seg = segments[i]
+            
+            # Use segment-level timing as a fallback
+            if "start" in seg:
+                start_ms = int(seg["start"] * 1000)
+            if "end" in seg:
+                end_ms = int(seg["end"] * 1000)
+                
+            # Extract word-level timing if available
+            seg_words = seg.get("words", [])
+            for w in seg_words:
+                if "start" in w and "end" in w:
+                    cap_words.append({
+                        "word": w.get("word", "").strip(),
+                        "start_ms": int(w["start"] * 1000),
+                        "end_ms": int(w["end"] * 1000),
+                    })
+            
+            # Refine segment timing using words if we found any
+            if cap_words:
+                start_ms = cap_words[0]["start_ms"]
+                end_ms = cap_words[-1]["end_ms"]
 
         output.append({
             "index": cap.index,
@@ -208,6 +213,7 @@ def _build_output(captions: List[CaptionInput], segments: list) -> list:
             "end_ms": end_ms,
             "words": cap_words,
         })
+        
     return output
 
 if __name__ == "__main__":
