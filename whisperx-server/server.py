@@ -126,7 +126,7 @@ async def align_captions(request: AlignRequest):
                     seg["end"] = cap.end_ms / 1000.0
                 segments.append(seg)
 
-            logger.info("Running forced alignment...")
+            logger.info(f"Running forced alignment for {len(segments)} segments...")
             try:
                 result = whisperx.align(
                     segments,
@@ -139,7 +139,7 @@ async def align_captions(request: AlignRequest):
             except Exception as e:
                 return {"error": f"Alignment failed: {e}"}
 
-            logger.info(f"Alignment complete — {len(result.get('segments', []))} segments")
+            logger.info(f"Alignment complete — {len(result.get('segments', []))} output segments")
             aligned = _build_output(request.captions, result.get("segments", []))
             return {"status": "success", "captions": aligned}
 
@@ -150,13 +150,17 @@ async def align_captions(request: AlignRequest):
                 except Exception:
                     pass
 
+    # Note: No yield b" " here because the proxy (server.js) handles its own keep-alive.
+    # StreamingResponse is still used to avoid FastAPI sync blocking.
     async def generate():
         loop = asyncio.get_running_loop()
         future = loop.run_in_executor(None, do_alignment)
         
         while not future.done():
+            # Still yield a tiny bit to keep the generator active if needed,
+            # but rawText.trim() in proxy will handle it.
             yield b" "
-            await asyncio.sleep(10)
+            await asyncio.sleep(15)
             
         result_dict = future.result()
         yield json.dumps(result_dict).encode('utf-8')
@@ -164,25 +168,35 @@ async def align_captions(request: AlignRequest):
     return StreamingResponse(generate(), media_type="application/json")
 
 def _build_output(captions: List[CaptionInput], segments: list) -> list:
-    output = []
-    for i, cap in enumerate(captions):
-        seg = segments[i] if i < len(segments) else {}
-
-        words = []
+    # Flatten all words from all returned segments.
+    # This solves the issue where WhisperX fragments one input segment into multiple output segments.
+    all_words = []
+    for seg in segments:
         for w in seg.get("words", []):
             if "start" in w and "end" in w:
-                words.append({
+                all_words.append({
                     "word": w.get("word", "").strip(),
                     "start_ms": int(w["start"] * 1000),
                     "end_ms": int(w["end"] * 1000),
                 })
 
-        if words:
-            start_ms = words[0]["start_ms"]
-            end_ms = words[-1]["end_ms"]
-        elif "start" in seg and "end" in seg:
-            start_ms = int(seg["start"] * 1000)
-            end_ms = int(seg["end"] * 1000)
+    def tokenize(text):
+        import re
+        return re.findall(r'\w+', text.lower())
+
+    output = []
+    word_idx = 0
+    for cap in captions:
+        tokens = tokenize(cap.text)
+        num_tokens = len(tokens)
+        
+        # Take the next N words that match our token count
+        cap_words = all_words[word_idx : word_idx + num_tokens]
+        word_idx += num_tokens
+
+        if cap_words:
+            start_ms = cap_words[0]["start_ms"]
+            end_ms = cap_words[-1]["end_ms"]
         else:
             start_ms = cap.start_ms or 0
             end_ms = cap.end_ms or (start_ms + 2000)
@@ -192,7 +206,7 @@ def _build_output(captions: List[CaptionInput], segments: list) -> list:
             "text": cap.text,
             "start_ms": start_ms,
             "end_ms": end_ms,
-            "words": words,
+            "words": cap_words,
         })
     return output
 

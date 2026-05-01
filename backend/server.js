@@ -342,14 +342,10 @@ ${JSON.stringify(captions.map(c => {
     console.log(`[/api/refine] Phase 2: WhisperX for ${captions.length} captions, ${acceptedSuggestions.length} accepted changes`);
 
     const suggestionsMap = new Map(acceptedSuggestions.map(s => [s.caption_index, s]));
-    const isChangedSet = new Set(acceptedSuggestions.map(s => s.caption_index));
-    // Also mark captions with "Timing needs" flags for alignment (even without suggestions)
-    for (const cap of captions) {
-      if (cap.timingFlag && (cap.timingFlag.includes('Timing needs') || cap.timingFlag.includes('Line too long'))) {
-        isChangedSet.add(cap.index);
-      }
-    }
-    const BOUNDARY_BUFFER_MS = 300;
+    // User wants to retime LITERALLY ALL captions
+    const isChangedSet = new Set(captions.map(c => c.index));
+
+    const BOUNDARY_BUFFER_MS = 500;
 
     const resolveText = (cap, suggestion) => {
       if (!suggestion) return cap.text;
@@ -363,74 +359,28 @@ ${JSON.stringify(captions.map(c => {
     const tokenize = text =>
       (text || '').toLowerCase().replace(/[^\w\s]/g, ' ').trim().split(/\s+/).filter(t => t.length > 0);
 
-    // Group consecutive changed/timing-flagged captions into chains.
-    const chainStart = new Array(captions.length).fill(-1);
-    const chainEnd = new Array(captions.length).fill(-1);
-    let ci = 0;
-    while (ci < captions.length) {
-      if (!isChangedSet.has(captions[ci].index)) { ci++; continue; }
-      const start = ci;
-      while (ci < captions.length && isChangedSet.has(captions[ci].index)) {
-        chainStart[ci] = start;
-        ci++;
-      }
-      const end = ci - 1;
-      for (let k = start; k <= end; k++) chainEnd[k] = end;
-    }
+    // Build WhisperX segments. We send EVERY caption as its own segment to ensure
+    // a 1-to-1 mapping and avoid fragmentation issues in the WhisperX server.
+    // Each segment gets a window based on its original timing + buffer.
+    const textForAlignment = [];
+    for (let i = 0; i < captions.length; i++) {
+      const cap = captions[i];
+      const suggestion = suggestionsMap.get(cap.index);
+      const text = resolveText(cap, suggestion);
+      
+      if (!text || !text.trim()) continue;
 
-    // Build ONE WhisperX segment per chain (concatenated text, chain outer window).
-    // WhisperX returns word-level timestamps for the whole chain; we then walk
-    // words by token count to assign per-caption timing — no internal boundary
-    // confusion because we never ask WhisperX to split the chain itself.
-    const chainTextMap = new Map(); // headArrayIdx → chain metadata
-    const processedChainHeads = new Set();
-    let chainArrayIdx = 0;
+      // Expand the window slightly to allow WhisperX to find the best fit
+      const windowStart = Math.max(0, (cap.start_ms || 0) - BOUNDARY_BUFFER_MS);
+      const windowEnd = (cap.end_ms || (cap.start_ms || 0) + 2000) + BOUNDARY_BUFFER_MS;
 
-    for (let idx = 0; idx < captions.length; idx++) {
-      if (!isChangedSet.has(captions[idx].index)) continue;
-      const head = chainStart[idx];
-      if (processedChainHeads.has(head)) continue;
-      processedChainHeads.add(head);
-
-      const tail = chainEnd[head];
-
-      // Only include non-deleted captions so concat text matches word count
-      const capEntries = [];
-      for (let k = head; k <= tail; k++) {
-        const cap = captions[k];
-        const resolvedText = resolveText(cap, suggestionsMap.get(cap.index));
-        if (resolvedText && resolvedText.trim()) capEntries.push({ cap, text: resolvedText });
-      }
-      if (capEntries.length === 0) continue;
-
-      const concatText = capEntries.map(e => e.text).join(' ');
-
-      let leftMs = null, rightMs = null;
-      for (let j = head - 1; j >= 0; j--) {
-        if (!isChangedSet.has(captions[j].index)) { leftMs = captions[j].end_ms; break; }
-      }
-      for (let j = tail + 1; j < captions.length; j++) {
-        if (!isChangedSet.has(captions[j].index)) { rightMs = captions[j].start_ms; break; }
-      }
-      const windowStart = Math.max(0, leftMs !== null ? leftMs - BOUNDARY_BUFFER_MS : (captions[head].start_ms || 0) - 1000);
-      const windowEnd = rightMs !== null ? rightMs + BOUNDARY_BUFFER_MS : ((captions[tail].end_ms || 0) + 1000);
-
-      chainTextMap.set(head, {
-        text: concatText,
-        startMs: windowStart,
-        endMs: windowEnd,
-        capEntries,
-        rightBoundary: rightMs,
-        arrayIdx: chainArrayIdx++
+      textForAlignment.push({
+        index: cap.index, // Keep original index for 1-to-1 mapping
+        text: text,
+        start_ms: windowStart,
+        end_ms: windowEnd
       });
     }
-
-    const textForAlignment = [...chainTextMap.values()].map(chain => ({
-      index: chain.arrayIdx,
-      text: chain.text,
-      start_ms: chain.startMs,
-      end_ms: chain.endMs
-    }));
 
     const whisperxURL = process.env.WHISPERX_URL;
     if (!whisperxURL) {
@@ -455,6 +405,7 @@ ${JSON.stringify(captions.map(c => {
     const whisperxStartTime = Date.now();
 
     try {
+      console.log(`[/api/refine] Sending ${textForAlignment.length} segments to WhisperX...`);
       const whisperxResponse = await fetch(`${whisperxURL}/align`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Secret': process.env.SHARED_SECRET },
@@ -464,18 +415,25 @@ ${JSON.stringify(captions.map(c => {
           captions: textForAlignment,
           language: 'en'
         }),
-        timeout: 120000
+        timeout: 300000 // 5 minutes for large files on CPU
       });
 
       if (!whisperxResponse.ok) {
         whisperxError = `WhisperX error: ${whisperxResponse.status}`;
         console.warn(whisperxError);
       } else {
-        whisperxResult = await whisperxResponse.json();
-        console.log(`[/api/refine] WhisperX returned word timing for ${whisperxResult.captions?.length || 0} chain(s)`);
+        // Handle potential leading spaces from WhisperX keep-alive
+        const rawText = await whisperxResponse.text();
+        try {
+          whisperxResult = JSON.parse(rawText.trim());
+          console.log(`[/api/refine] WhisperX returned ${whisperxResult.captions?.length || 0} aligned segments`);
+        } catch (e) {
+          whisperxError = `Failed to parse WhisperX JSON: ${e.message}`;
+          console.warn(whisperxError, rawText.slice(0, 100));
+        }
       }
     } catch (err) {
-      whisperxError = `WhisperX unreachable: ${err.message}`;
+      whisperxError = `WhisperX unreachable or timeout: ${err.message}`;
       console.warn(whisperxError);
     }
 
@@ -485,54 +443,15 @@ ${JSON.stringify(captions.map(c => {
       error: whisperxError
     };
 
-    // Walk word-level WhisperX results and assign per-caption timing.
-    // Each chain was one concatenated segment; we distribute words to captions
-    // by token count. Caption N ends where caption N+1 starts (no internal gaps).
-    // Last chain caption extends to the next unchanged caption's start.
-    const chainAssignedTiming = new Map(); // capIndex → {startMs, endMs} | null (Stage 1 fallback)
-
+    // Map WhisperX results back to captions
+    const assignedTiming = new Map(); // capIndex -> {startMs, endMs}
     if (whisperxResult && Array.isArray(whisperxResult.captions)) {
-      const whisperxChains = new Map(whisperxResult.captions.map(c => [c.index, c.words || []]));
-
-      for (const chain of chainTextMap.values()) {
-        const words = whisperxChains.get(chain.arrayIdx) || [];
-
-        if (words.length === 0) {
-          for (const { cap } of chain.capEntries) chainAssignedTiming.set(cap.index, null);
-          continue;
-        }
-
-        let wordPos = 0;
-        const capWordBuckets = [];
-        for (const { cap, text } of chain.capEntries) {
-          const tokens = tokenize(text);
-          const numTokens = Math.max(tokens.length, 1);
-          const capWords = words.slice(wordPos, wordPos + numTokens);
-          wordPos += numTokens;
-          // Subtract a small offset from word starts: wav2vec2 anchors to vowel/energy
-          // onset rather than consonant onset, so start_ms is typically 80-120ms late.
-          // This corrects within-chain transitions (caption N end = caption N+1 start_ms)
-          // which otherwise stay on screen through the early consonants of the next caption.
-          const WORD_START_OFFSET_MS = 100;
-          capWordBuckets.push(capWords.length > 0
-            ? { capIndex: cap.index, startMs: Math.max(0, capWords[0].start_ms - WORD_START_OFFSET_MS), endWords: capWords[capWords.length - 1].end_ms }
-            : null);
-        }
-
-        for (let k = 0; k < chain.capEntries.length; k++) {
-          const { cap } = chain.capEntries[k];
-          const bucket = capWordBuckets[k];
-          if (!bucket) { chainAssignedTiming.set(cap.index, null); continue; }
-
-          let endMs;
-          if (k < chain.capEntries.length - 1) {
-            const nextBucket = capWordBuckets[k + 1];
-            endMs = nextBucket ? nextBucket.startMs : bucket.endWords;
-          } else {
-            endMs = chain.rightBoundary !== null ? chain.rightBoundary : bucket.endWords;
-          }
-          chainAssignedTiming.set(cap.index, { startMs: bucket.startMs, endMs });
-        }
+      for (const aligned of whisperxResult.captions) {
+        // No WORD_START_OFFSET_MS as requested by user
+        assignedTiming.set(aligned.index, {
+          startMs: aligned.start_ms,
+          endMs: aligned.end_ms
+        });
       }
     }
 
@@ -540,7 +459,7 @@ ${JSON.stringify(captions.map(c => {
       captions,
       acceptedSuggestions,
       !!whisperxError,
-      chainAssignedTiming
+      assignedTiming
     );
 
     // Gemini-only version: accepted text + Stage 1 timing (no WhisperX changes).
@@ -572,10 +491,8 @@ ${JSON.stringify(captions.map(c => {
   }
 });
 
-// Helper: Merge accepted suggestions + chain-assigned WhisperX timing into original captions.
-// chainAssignedTiming: Map<capIndex, {startMs, endMs}> built by walking word-level
-// results from single-segment chain alignment. Absent entry = Stage 1 fallback.
-function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, chainAssignedTiming = new Map()) {
+// Helper: Merge accepted suggestions + assigned WhisperX timing into original captions.
+function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assignedTiming = new Map()) {
   const suggestionsMap = new Map(suggestions.map(s => [s.caption_index, s]));
 
   const merged = originalCaptions.map(cap => {
@@ -593,20 +510,17 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, chai
       newText = cap.text;
     }
 
-    // Timing: use chain-assigned word-boundary timing for changed/flagged captions.
-    // null entry = WhisperX failed for this chain → keep Stage 1 timing.
-    // Unchanged captions always keep Stage 1 timing.
     let startMs = cap.start_ms;
     let endMs = cap.end_ms;
-    const hasTimingNeeds = cap.timingFlag && cap.timingFlag.startsWith('Timing needs');
-    const shouldAlign = isChanged || hasTimingNeeds;
-    if (shouldAlign) {
-      const assigned = chainAssignedTiming.get(cap.index);
-      if (assigned) {
-        startMs = assigned.startMs;
-        endMs = assigned.endMs;
+    let timingWasChanged = false;
+
+    const assigned = assignedTiming.get(cap.index);
+    if (assigned) {
+      if (Math.abs(assigned.startMs - startMs) > 10 || Math.abs(assigned.endMs - endMs) > 10) {
+        timingWasChanged = true;
       }
-      // else: no entry = WhisperX failed for this chain → keep Stage 1 timing
+      startMs = assigned.startMs;
+      endMs = assigned.endMs;
     }
 
     return {
@@ -620,6 +534,7 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, chai
       reason: isChanged ? suggestion.reason : null,
       original_text: cap.text,
       timing_flag: cap.timingFlag || null,
+      timing_changed: timingWasChanged,
       partial: isPartial
     };
   });
@@ -669,7 +584,7 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, chai
   // Snap-to-next: close small gaps (< 500ms) between adjacent captions.
   // Within-chain gaps are already eliminated by the word-boundary assignment above;
   // this handles residual gaps at chain/unchanged boundaries and Stage 1 captions.
-  const SNAP_THRESHOLD_MS = 500;
+  const SNAP_THRESHOLD_MS = 1000;
   for (let i = 0; i < surviving.length - 1; i++) {
     const gap = surviving[i + 1].start_ms - surviving[i].end_ms;
     if (gap > 0 && gap < SNAP_THRESHOLD_MS) {
