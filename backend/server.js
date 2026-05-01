@@ -370,9 +370,14 @@ ${JSON.stringify(captions.map(c => {
       
       if (!text || !text.trim()) continue;
 
-      // Expand the window slightly to allow WhisperX to find the best fit
-      const windowStart = Math.max(0, (cap.start_ms || 0) - BOUNDARY_BUFFER_MS);
-      const windowEnd = (cap.end_ms || (cap.start_ms || 0) + 2000) + BOUNDARY_BUFFER_MS;
+      // Expand the window for WhisperX.
+      // For split captions (duration 0), use a slightly smaller 5s window to prevent 
+      // locking onto distant identical words. Otherwise use the requested 10s.
+      const duration = (cap.end_ms || 0) - (cap.start_ms || 0);
+      const buffer = duration <= 0 ? 5000 : BOUNDARY_BUFFER_MS;
+      
+      const windowStart = Math.max(0, (cap.start_ms || 0) - buffer);
+      const windowEnd = (cap.end_ms || (cap.start_ms || 0) + 2000) + buffer;
 
       textForAlignment.push({
         index: cap.index,
@@ -571,16 +576,16 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
     surviving = surviving.filter((_, i) => !dedupFlags[i]);
   }
 
-  // Clamp overlaps — preserve original text order, never sort by timestamp.
-  // We allow a tiny overlap (50ms) to prevent aggressive sequential clamping 
-  // from pushing the entire file late if there are many near-simultaneous words.
-  const MAX_OVERLAP_MS = 50;
+  // Clamp overlaps — allow a bit more room (100ms) for human perception 
+  // and to prevent the "squeezing" of short consecutive captions.
+  const MAX_OVERLAP_MS = 100;
   for (let i = 1; i < surviving.length; i++) {
     if (surviving[i].start_ms < (surviving[i - 1].end_ms - MAX_OVERLAP_MS)) {
       surviving[i].start_ms = surviving[i - 1].end_ms;
     }
+    // If a caption is squeezed to 0 or negative duration, give it a tiny 200ms minimum.
     if (surviving[i].end_ms <= surviving[i].start_ms) {
-      surviving[i].end_ms = surviving[i].start_ms + 400;
+      surviving[i].end_ms = surviving[i].start_ms + 200;
     }
   }
 
