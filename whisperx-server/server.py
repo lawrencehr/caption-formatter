@@ -208,15 +208,16 @@ def _build_output(captions: List[CaptionInput], segments: list) -> list:
                     })
                     logger.debug(f"  Word: {w.get('word')} [{w_start}-{w_end}]")
             
-            # If word alignment succeeded, use it to refine boundaries
+            # If word alignment succeeded, use it to refine boundaries.
+            # Add a small 200ms tail to the end to prevent "blip" captions.
             if cap_words:
                 start_ms = cap_words[0]["start_ms"]
-                end_ms = cap_words[-1]["end_ms"]
+                end_ms = cap_words[-1]["end_ms"] + 200
             else:
                 # Fallback to segment-level timing if words are missing
                 if "start" in seg and "end" in seg:
                     start_ms = int(seg["start"] * 1000)
-                    end_ms = int(seg["end"] * 1000)
+                    end_ms = int(seg["end"] * 1000) + 200
                 logger.warning(f"No word-level alignment for caption {cap.index} ('{cap.text[:20]}...')")
 
         output.append({

@@ -590,12 +590,14 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
 
     // Clamp overlaps sequentially
     const MAX_OVERLAP_MS = 100;
+    const MIN_DURATION_MS = 500;
     for (let i = 1; i < surviving.length; i++) {
       if (surviving[i].start_ms < (surviving[i - 1].end_ms - MAX_OVERLAP_MS)) {
         surviving[i].start_ms = surviving[i - 1].end_ms;
       }
-      if (surviving[i].end_ms <= surviving[i].start_ms) {
-        surviving[i].end_ms = surviving[i].start_ms + 100;
+      // Ensure a readable minimum duration
+      if (surviving[i].end_ms < (surviving[i].start_ms + MIN_DURATION_MS)) {
+        surviving[i].end_ms = surviving[i].start_ms + MIN_DURATION_MS;
       }
     }
 
