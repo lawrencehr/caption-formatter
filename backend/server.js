@@ -354,7 +354,7 @@ ${JSON.stringify(captions.map(c => {
       ...captions.filter(c => c.timingFlag && c.timingFlag.startsWith('Timing needs')).map(c => c.index)
     ]);
 
-    const BOUNDARY_BUFFER_MS = 1500;
+    const BOUNDARY_BUFFER_MS = 1000;
 
     const resolveText = (cap, suggestion) => {
       if (!suggestion) return cap.text;
@@ -594,29 +594,16 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
     surviving = surviving.filter((_, i) => !dedupFlags[i]);
   }
 
-    // Clamp overlaps sequentially - using Midpoint Resolution to avoid "squeezing"
+    // Clamp overlaps sequentially
+    const MAX_OVERLAP_MS = 100;
     const MIN_DURATION_MS = 500;
     for (let i = 1; i < surviving.length; i++) {
-      const prev = surviving[i - 1];
-      const curr = surviving[i];
-
-      if (curr.start_ms < prev.end_ms) {
-        // Find the midpoint of the overlap to share the space fairly
-        const midpoint = Math.floor((prev.end_ms + curr.start_ms) / 2);
-        
-        // Only apply midpoint if it doesn't make 'prev' too short
-        if (midpoint > prev.start_ms + 200) {
-          prev.end_ms = midpoint;
-          curr.start_ms = midpoint;
-        } else {
-          // Fallback to standard push-forward if prev is already very short
-          curr.start_ms = prev.end_ms;
-        }
+      if (surviving[i].start_ms < (surviving[i - 1].end_ms - MAX_OVERLAP_MS)) {
+        surviving[i].start_ms = surviving[i - 1].end_ms;
       }
-      
-      // Safety check for duration
-      if (curr.end_ms < (curr.start_ms + MIN_DURATION_MS)) {
-        curr.end_ms = curr.start_ms + MIN_DURATION_MS;
+      // Ensure a readable minimum duration
+      if (surviving[i].end_ms < (surviving[i].start_ms + MIN_DURATION_MS)) {
+        surviving[i].end_ms = surviving[i].start_ms + MIN_DURATION_MS;
       }
     }
 
