@@ -348,7 +348,7 @@ ${JSON.stringify(captions.map(c => {
       ...captions.filter(c => c.timingFlag && c.timingFlag.startsWith('Timing needs')).map(c => c.index)
     ]);
 
-    const BOUNDARY_BUFFER_MS = 10000; // Increased to 10s to handle significant phrase movement
+    const BOUNDARY_BUFFER_MS = 1000;
 
     const resolveText = (cap, suggestion) => {
       if (!suggestion) return cap.text;
@@ -380,11 +380,9 @@ ${JSON.stringify(captions.map(c => {
       if (!text || !text.trim()) continue;
 
       // Expand the window for WhisperX.
-      // 5s is a good balance for significant shifts on CPU.
-      const buffer = 5000;
+      const buffer = BOUNDARY_BUFFER_MS;
       const windowStart = Math.max(0, (cap.start_ms || 0) - buffer);
-      // Ensure the window has some minimum duration (at least 2s)
-      const windowEnd = Math.max(windowStart + 2000, (cap.end_ms || (cap.start_ms || 0) + 2000) + buffer);
+      const windowEnd = (cap.end_ms || (cap.start_ms || 0) + 2000) + buffer;
 
       textForAlignment.push({
         index: cap.index,
@@ -590,31 +588,16 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
     surviving = surviving.filter((_, i) => !dedupFlags[i]);
   }
 
-  // Clamp overlaps — trust WhisperX timings over original SRT timings.
-  const MAX_OVERLAP_MS = 150;
-  for (let i = 1; i < surviving.length; i++) {
-    const prev = surviving[i - 1];
-    const curr = surviving[i];
-
-    if (curr.start_ms < (prev.end_ms - MAX_OVERLAP_MS)) {
-      // If the current caption was retimed by WhisperX but the previous one is 
-      // still using "original" timing, the original one is likely "late".
-      // Shrink the previous one instead of pushing this one forward.
-      if (curr.timing_changed && !prev.timing_changed) {
-        prev.end_ms = curr.start_ms;
-        // Ensure prev doesn't become zero-length
-        if (prev.end_ms <= prev.start_ms) prev.end_ms = prev.start_ms + 100;
-      } else {
-        // Otherwise (both retimed or both original), push this one forward
-        curr.start_ms = prev.end_ms;
+    // Clamp overlaps sequentially
+    const MAX_OVERLAP_MS = 100;
+    for (let i = 1; i < surviving.length; i++) {
+      if (surviving[i].start_ms < (surviving[i - 1].end_ms - MAX_OVERLAP_MS)) {
+        surviving[i].start_ms = surviving[i - 1].end_ms;
+      }
+      if (surviving[i].end_ms <= surviving[i].start_ms) {
+        surviving[i].end_ms = surviving[i].start_ms + 100;
       }
     }
-    
-    // Safety check for duration
-    if (curr.end_ms <= curr.start_ms) {
-      curr.end_ms = curr.start_ms + 100;
-    }
-  }
 
   // Snap-to-next: close small gaps between adjacent captions.
   // Within-chain gaps are already eliminated by the word-boundary assignment above;
