@@ -342,8 +342,11 @@ ${JSON.stringify(captions.map(c => {
     console.log(`[/api/refine] Phase 2: WhisperX for ${captions.length} captions, ${acceptedSuggestions.length} accepted changes`);
 
     const suggestionsMap = new Map(acceptedSuggestions.map(s => [s.caption_index, s]));
-    // User wants to retime LITERALLY ALL captions
-    const isChangedSet = new Set(captions.map(c => c.index));
+    // Only retime captions that were changed by Gemini or flagged for timing issues
+    const isChangedSet = new Set([
+      ...acceptedSuggestions.map(s => s.caption_index),
+      ...captions.filter(c => c.timingFlag && c.timingFlag.startsWith('Timing needs')).map(c => c.index)
+    ]);
 
     const BOUNDARY_BUFFER_MS = 500;
 
@@ -356,15 +359,12 @@ ${JSON.stringify(captions.map(c => {
       return isDelete ? '' : suggestion.new_text;
     };
 
-    const tokenize = text =>
-      (text || '').toLowerCase().replace(/[^\w\s]/g, ' ').trim().split(/\s+/).filter(t => t.length > 0);
-
-    // Build WhisperX segments. We send EVERY caption as its own segment to ensure
-    // a 1-to-1 mapping and avoid fragmentation issues in the WhisperX server.
-    // Each segment gets a window based on its original timing + buffer.
+    // Build WhisperX segments. We only send the captions that actually need retiming.
     const textForAlignment = [];
     for (let i = 0; i < captions.length; i++) {
       const cap = captions[i];
+      if (!isChangedSet.has(cap.index)) continue;
+
       const suggestion = suggestionsMap.get(cap.index);
       const text = resolveText(cap, suggestion);
       
@@ -375,7 +375,7 @@ ${JSON.stringify(captions.map(c => {
       const windowEnd = (cap.end_ms || (cap.start_ms || 0) + 2000) + BOUNDARY_BUFFER_MS;
 
       textForAlignment.push({
-        index: cap.index, // Keep original index for 1-to-1 mapping
+        index: cap.index,
         text: text,
         start_ms: windowStart,
         end_ms: windowEnd
