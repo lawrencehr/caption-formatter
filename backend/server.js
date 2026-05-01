@@ -590,16 +590,29 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
     surviving = surviving.filter((_, i) => !dedupFlags[i]);
   }
 
-  // Clamp overlaps — allow a healthy overlap (150ms) to prevent "stacking" 
-  // and keep the start times as accurate as possible.
+  // Clamp overlaps — trust WhisperX timings over original SRT timings.
   const MAX_OVERLAP_MS = 150;
   for (let i = 1; i < surviving.length; i++) {
-    if (surviving[i].start_ms < (surviving[i - 1].end_ms - MAX_OVERLAP_MS)) {
-      surviving[i].start_ms = surviving[i - 1].end_ms;
+    const prev = surviving[i - 1];
+    const curr = surviving[i];
+
+    if (curr.start_ms < (prev.end_ms - MAX_OVERLAP_MS)) {
+      // If the current caption was retimed by WhisperX but the previous one is 
+      // still using "original" timing, the original one is likely "late".
+      // Shrink the previous one instead of pushing this one forward.
+      if (curr.timing_changed && !prev.timing_changed) {
+        prev.end_ms = curr.start_ms;
+        // Ensure prev doesn't become zero-length
+        if (prev.end_ms <= prev.start_ms) prev.end_ms = prev.start_ms + 100;
+      } else {
+        // Otherwise (both retimed or both original), push this one forward
+        curr.start_ms = prev.end_ms;
+      }
     }
-    // No more hardcoded duration fallback (like 0.2s) - let's see the real timing.
-    if (surviving[i].end_ms <= surviving[i].start_ms) {
-      surviving[i].end_ms = surviving[i].start_ms + 100; // Minimal 100ms
+    
+    // Safety check for duration
+    if (curr.end_ms <= curr.start_ms) {
+      curr.end_ms = curr.start_ms + 100;
     }
   }
 
