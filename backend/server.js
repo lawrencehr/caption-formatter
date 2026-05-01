@@ -417,7 +417,12 @@ ${JSON.stringify(captions.map(c => {
     const whisperxStartTime = Date.now();
 
     try {
-      console.log(`[/api/refine] Sending ${textForAlignment.length} segments to WhisperX...`);
+      console.log(`[/api/refine] Sending ${textForAlignment.length} cleaned segments to WhisperX...`);
+      // Log the first few for verification
+      textForAlignment.slice(0, 3).forEach(t => {
+          console.log(`  -> Segment ${t.index}: "${t.text.substring(0, 40)}${t.text.length > 40 ? '...' : ''}" (${t.start_ms}ms - ${t.end_ms}ms)`);
+      });
+
       const whisperxResponse = await fetch(`${whisperxURL}/align`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Secret': process.env.SHARED_SECRET },
@@ -436,9 +441,11 @@ ${JSON.stringify(captions.map(c => {
       } else {
         // Handle potential leading spaces from WhisperX keep-alive
         const rawText = await whisperxResponse.text();
+        console.log(`[/api/refine] WhisperX raw response received (${rawText.length} bytes)`);
+        
         try {
           whisperxResult = JSON.parse(rawText.trim());
-          console.log(`[/api/refine] WhisperX returned ${whisperxResult.captions?.length || 0} aligned segments`);
+          console.log(`[/api/refine] WhisperX parsed successfully: ${whisperxResult.captions?.length || 0} segments returned`);
         } catch (e) {
           whisperxError = `Failed to parse WhisperX JSON: ${e.message}`;
           console.warn(whisperxError, rawText.slice(0, 100));

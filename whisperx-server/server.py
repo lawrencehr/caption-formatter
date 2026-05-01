@@ -142,13 +142,13 @@ async def align_captions(request: AlignRequest):
                 aligned_segments = result.get("segments", [])
                 for i, res_seg in enumerate(aligned_segments):
                     words_found = len(res_seg.get("words", []))
-                    if words_found == 0:
-                        logger.warning(f"  Segment {i} FAILED: No words aligned for '{res_seg.get('text', '')[:30]}...'")
-                    else:
-                        logger.info(f"  Segment {i} OK: Found {words_found} words.")
+                    msg = f"  Segment {i} OK: Found {words_found} words." if words_found > 0 else f"  Segment {i} FAILED: No words aligned for '{res_seg.get('text', '')[:30]}...'"
+                    logger.info(msg)
+                    print(msg) # Explicit print for Render logs
 
             except Exception as e:
                 logger.error(f"Alignment Error: {e}", exc_info=True)
+                print(f"Alignment Error: {e}")
                 return {"error": f"Alignment failed: {e}"}
 
             logger.info(f"Alignment complete — {len(result.get('segments', []))} output segments")
