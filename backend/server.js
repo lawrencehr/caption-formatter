@@ -371,10 +371,8 @@ ${JSON.stringify(captions.map(c => {
       if (!text || !text.trim()) continue;
 
       // Expand the window for WhisperX.
-      // For split captions (duration 0), use a slightly smaller 5s window to prevent 
-      // locking onto distant identical words. Otherwise use the requested 10s.
-      const duration = (cap.end_ms || 0) - (cap.start_ms || 0);
-      const buffer = duration <= 0 ? 5000 : BOUNDARY_BUFFER_MS;
+      // A 2s buffer is usually enough for shifts while remaining fast on CPU.
+      const buffer = 2000;
       
       const windowStart = Math.max(0, (cap.start_ms || 0) - buffer);
       const windowEnd = (cap.end_ms || (cap.start_ms || 0) + 2000) + buffer;
@@ -576,16 +574,16 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
     surviving = surviving.filter((_, i) => !dedupFlags[i]);
   }
 
-  // Clamp overlaps — allow a bit more room (100ms) for human perception 
-  // and to prevent the "squeezing" of short consecutive captions.
-  const MAX_OVERLAP_MS = 100;
+  // Clamp overlaps — allow a healthy overlap (150ms) to prevent "stacking" 
+  // and keep the start times as accurate as possible.
+  const MAX_OVERLAP_MS = 150;
   for (let i = 1; i < surviving.length; i++) {
     if (surviving[i].start_ms < (surviving[i - 1].end_ms - MAX_OVERLAP_MS)) {
       surviving[i].start_ms = surviving[i - 1].end_ms;
     }
-    // If a caption is squeezed to 0 or negative duration, give it a tiny 200ms minimum.
+    // No more hardcoded duration fallback (like 0.2s) - let's see the real timing.
     if (surviving[i].end_ms <= surviving[i].start_ms) {
-      surviving[i].end_ms = surviving[i].start_ms + 200;
+      surviving[i].end_ms = surviving[i].start_ms + 100; // Minimal 100ms
     }
   }
 
