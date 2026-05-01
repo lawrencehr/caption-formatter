@@ -158,39 +158,33 @@ app.post('/api/refine', async (req, res) => {
       const geminiPrompt = `You are an expert caption editor for ABC Media Watch social media videos.
 You will receive audio and a list of captions that have been auto-formatted from a Premiere Pro export.
 
-YOUR OBJECTIVE: Review the captions against what is actually said in the audio and suggest improvements to where caption breaks fall to improve readability and flow.
+Your job: review the captions against what is actually said in the audio, and suggest improvements where caption breaks fall in awkward places.
 
 THE GOLDEN RULE: ZERO TEXT LOSS
 You MUST NOT edit, rephrase, or omit any words from the original captions. Your only task is to move the boundaries (the breaks) between captions. Every word in the input must appear exactly once in your output. No words can be added, and NO words can be deleted unless the entire caption is being merged into another.
 
-NAME TAG RULE (HIGHEST PRIORITY):
+PRIORITISE:
+- Captions flagged with "⚠" — these are known to have timing issues
+- Captions where a person's name is split across two captions
+- Caption breaks that fall mid-phrase or mid-thought when the audio has a natural pause elsewhere
+- Captions that combine end-of-one-thought + start-of-another (should split)
+
+CRITICAL RULES FOR MOVING TEXT:
+1. If you move words from one caption to another, you MUST return an update for BOTH captions to prevent duplicating text!
+2. DO NOT DUPLICATE WORDS across captions.
+3. CHAIN COMPLETENESS: when you shift text through a sequence, EVERY caption in the chain must have an update. If caption N consumes words from N+1, then N+1 MUST also have an update — either with its new shifted text, or with new_text="" if it was fully absorbed.
+
+NAME TAG RULE:
 A speaker name tag (e.g. "LIAM BARTLETT:", "CHRIS BOWEN:") MUST always remain as the FIRST LINE of its own caption.
 - NEVER move text from a preceding caption into a caption that starts with a name tag — it would push the name tag off the top line.
 - NEVER move the name tag itself away from the start of its caption.
-- If a caption is too long but the NEXT caption starts with a name tag, check if you can move words to the PREVIOUS caption instead.
-- If text following a name tag is too long, redistribute words with the caption AFTER the name tag caption, not the caption before it.
+- When text following a name tag is too long, redistribute words with the caption AFTER the name tag caption, not the caption before it.
 
 ITALIC BOUNDARY RULE (STRICT):
 Never suggest changes that would merge text across italic/non-italic boundaries.
 - If caption N is italic and caption N+1 is not italic (or vice versa), do NOT move text between them.
 - Each caption must be ENTIRELY italic or ENTIRELY non-italic.
 - If you need extra room to fix a long line but the neighbor has a different italic state, you MUST SPLIT the caption into two rather than crossing the boundary.
-
-LINE LENGTH RULE (CRITICAL):
-Each caption is displayed on exactly 2 lines, max 30 characters per line (60 characters total).
-- Captions with a speaker name tag (e.g. "JOHN SMITH:") use the entire first line for the name tag, leaving ONLY the second line (max 30 chars) for spoken text.
-- For these, you MUST fit the spoken text within the provided effective_max_chars (which is 60 minus the name tag length).
-- If a caption is flagged with line_too_long: true, you MUST fix the overflow.
-- If you cannot move words to a neighbor (because of name tags or italic boundaries), you MUST SPLIT the caption into two separate captions instead.
-- NO suggested caption should ever exceed 60 characters total.
-
-SINGLE WORD RULE:
-Avoid captions that contain only a single word unless it is a significant exclamation or the start of a new speaker. Merge single-word captions into the preceding or following caption where possible, provided it doesn't violate the Line Length Rule.
-
-CRITICAL RULES FOR MOVING TEXT:
-1. If you move words from one caption to another, you MUST return an update for BOTH captions to prevent duplicating text!
-2. DO NOT DUPLICATE WORDS across captions.
-3. CHAIN COMPLETENESS: when you shift text through a sequence, EVERY caption in the chain must have an update. If caption N consumes words from N+1, then N+1 MUST also have an update — either with its new shifted text, or with new_text="" if it was fully absorbed.
 
 DO NOT CHANGE:
 - The actual words spoken (ZERO text loss!)
@@ -200,11 +194,20 @@ DO NOT CHANGE:
 
 OUTPUT FORMAT:
 Return ONLY a JSON array. No preamble. No markdown. If no changes needed, return [].
-For each change:
+For each change, specify:
 - caption_index: the 1-based index from the input
 - new_text: the suggested replacement text (or "" if deleted)
 - change_type: "phrase_break" | "name_kept_together" | "timing_only" | "split" | "merge" | "delete"
 - reason: 1-sentence explanation
+
+LINE LENGTH RULE:
+Each caption is displayed on up to 2 lines, max 30 characters per line (60 total for normal captions).
+Captions with a speaker name tag (e.g. "JOHN SMITH:") always use the first line for the name tag, leaving only the second line for spoken text.
+- For these, you MUST fit the spoken text within the provided effective_max_chars (which is 60 minus the name tag length).
+- If a caption is flagged with line_too_long: true, you MUST fix the overflow.
+- If you cannot move words to a neighbor (because of name tags or italic boundaries), you MUST SPLIT the caption into two separate captions instead.
+- NO suggested caption should ever exceed 60 characters total.
+Write new_text as a flat string with NO line breaks — the formatter will split it automatically.
 
 INPUT CAPTIONS:
 ${JSON.stringify(captions.map(c => {
