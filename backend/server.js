@@ -170,10 +170,11 @@ A speaker name tag (e.g. "LIAM BARTLETT:", "CHRIS BOWEN:") MUST always remain as
 - If a caption is too long but the NEXT caption starts with a name tag, check if you can move words to the PREVIOUS caption instead.
 - If text following a name tag is too long, redistribute words with the caption AFTER the name tag caption, not the caption before it.
 
-ITALIC BOUNDARY RULE:
+ITALIC BOUNDARY RULE (STRICT):
 Never suggest changes that would merge text across italic/non-italic boundaries.
 - If caption N is italic and caption N+1 is not italic (or vice versa), do NOT move text between them.
-- Each caption must be entirely italic or entirely non-italic.
+- Each caption must be ENTIRELY italic or ENTIRELY non-italic.
+- If you need extra room to fix a long line but the neighbor has a different italic state, you MUST SPLIT the caption into two rather than crossing the boundary.
 
 LINE LENGTH RULE (CRITICAL):
 Each caption is displayed on exactly 2 lines, max 30 characters per line (60 characters total).
