@@ -359,6 +359,14 @@ ${JSON.stringify(captions.map(c => {
       return isDelete ? '' : suggestion.new_text;
     };
 
+    const cleanTextForAlignment = (text) => {
+      return (text || '')
+        .replace(/^([A-Z][A-Z\s.\-']{1,40}:)/, '') // Remove speaker labels like "JODY:"
+        .replace(/<\/?[bi]>/gi, '')                // Remove <i> or <b> tags
+        .replace(/\s+/g, ' ')                      // Normalize whitespace
+        .trim();
+    };
+
     // Build WhisperX segments. We only send the captions that actually need retiming.
     const textForAlignment = [];
     for (let i = 0; i < captions.length; i++) {
@@ -366,16 +374,17 @@ ${JSON.stringify(captions.map(c => {
       if (!isChangedSet.has(cap.index)) continue;
 
       const suggestion = suggestionsMap.get(cap.index);
-      const text = resolveText(cap, suggestion);
+      const rawText = resolveText(cap, suggestion);
+      const text = cleanTextForAlignment(rawText);
       
       if (!text || !text.trim()) continue;
 
       // Expand the window for WhisperX.
-      // A 2s buffer is usually enough for shifts while remaining fast on CPU.
+      // A 2s buffer around the original timing is usually ideal.
       const buffer = 2000;
-      
       const windowStart = Math.max(0, (cap.start_ms || 0) - buffer);
-      const windowEnd = (cap.end_ms || (cap.start_ms || 0) + 2000) + buffer;
+      // Ensure the window has some minimum duration (at least 2s)
+      const windowEnd = Math.max(windowStart + 2000, (cap.end_ms || (cap.start_ms || 0) + 2000) + buffer);
 
       textForAlignment.push({
         index: cap.index,
