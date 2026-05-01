@@ -202,7 +202,7 @@ For each change:
 - caption_index: the 1-based index from the input
 - new_text: the suggested replacement text (or "" if deleted)
 - change_type: "phrase_break" | "name_kept_together" | "timing_only" | "split" | "merge" | "delete"
-- reason: 1-sentence explanation`;
+- reason: 1-sentence explanation
 
 INPUT CAPTIONS:
 ${JSON.stringify(captions.map(c => {
