@@ -177,7 +177,8 @@ Never suggest changes that would merge text across italic/non-italic boundaries.
 
 LINE LENGTH RULE (CRITICAL):
 Each caption is displayed on exactly 2 lines, max 30 characters per line (60 characters total).
-- You MUST ENSURE that your suggested new_text fits within the provided effective_max_chars (usually 60, but less if a name tag is present).
+- Captions with a speaker name tag (e.g. "JOHN SMITH:") use the entire first line for the name tag, leaving ONLY the second line (max 30 chars) for spoken text.
+- For these, you MUST fit the spoken text within the provided effective_max_chars (which is 60 minus the name tag length).
 - If a caption is flagged with line_too_long: true, you MUST fix the overflow.
 - If you cannot move words to a neighbor (because of name tags or italic boundaries), you MUST SPLIT the caption into two separate captions instead.
 - NO suggested caption should ever exceed 60 characters total.
