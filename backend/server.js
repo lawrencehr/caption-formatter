@@ -160,6 +160,9 @@ You will receive audio and a list of captions that have been auto-formatted from
 
 Your job: review the captions against what is actually said in the audio, and suggest improvements where caption breaks fall in awkward places.
 
+MINIMAL CHANGES RULE:
+Only suggest changes where they significantly improve readability, fix technical errors (like line length), or correct major phrasing awkwardness. If a caption is already clear and follows the formatting rules, LEAVE IT UNTOUCHED. Do not suggest changes for minor stylistic reasons.
+
 THE GOLDEN RULE: ZERO TEXT LOSS
 You MUST NOT edit, rephrase, or omit any words from the original captions. Your only task is to move the boundaries (the breaks) between captions. Every word in the input must appear exactly once in your output. No words can be added, and NO words can be deleted unless the entire caption is being merged into another.
 
@@ -243,7 +246,7 @@ ${JSON.stringify(captions.map(c => {
             { text: geminiPrompt }
           ]
         }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: 65536 },
+        generationConfig: { temperature: 0.1, maxOutputTokens: 65536 },
         safetySettings: [
           { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
           { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
