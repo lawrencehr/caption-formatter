@@ -125,6 +125,7 @@ async def align_captions(request: AlignRequest):
                 if cap.end_ms is not None:
                     seg["end"] = cap.end_ms / 1000.0
                 segments.append(seg)
+                logger.info(f"  Input Segment: '{cap.text[:30]}...' ({seg.get('start', 0):.2f}s - {seg.get('end', 0):.2f}s)")
 
             logger.info(f"Running forced alignment for {len(segments)} segments...")
             try:
@@ -136,7 +137,18 @@ async def align_captions(request: AlignRequest):
                     device=_device,
                     return_char_alignments=False,
                 )
+                
+                # Check how many segments actually got word-level timing
+                aligned_segments = result.get("segments", [])
+                for i, res_seg in enumerate(aligned_segments):
+                    words_found = len(res_seg.get("words", []))
+                    if words_found == 0:
+                        logger.warning(f"  Segment {i} FAILED: No words aligned for '{res_seg.get('text', '')[:30]}...'")
+                    else:
+                        logger.info(f"  Segment {i} OK: Found {words_found} words.")
+
             except Exception as e:
+                logger.error(f"Alignment Error: {e}", exc_info=True)
                 return {"error": f"Alignment failed: {e}"}
 
             logger.info(f"Alignment complete — {len(result.get('segments', []))} output segments")
@@ -150,20 +162,20 @@ async def align_captions(request: AlignRequest):
                 except Exception:
                     pass
 
-    # Note: No yield b" " here because the proxy (server.js) handles its own keep-alive.
-    # StreamingResponse is still used to avoid FastAPI sync blocking.
     async def generate():
         loop = asyncio.get_running_loop()
         future = loop.run_in_executor(None, do_alignment)
         
         while not future.done():
-            # Still yield a tiny bit to keep the generator active if needed,
-            # but rawText.trim() in proxy will handle it.
             yield b" "
-            await asyncio.sleep(15)
+            await asyncio.sleep(1)
             
-        result_dict = future.result()
-        yield json.dumps(result_dict).encode('utf-8')
+        try:
+            result_dict = future.result()
+            yield json.dumps(result_dict).encode('utf-8')
+        except Exception as e:
+            logger.error(f"Pipeline Error: {e}", exc_info=True)
+            yield json.dumps({"error": str(e)}).encode('utf-8')
 
     return StreamingResponse(generate(), media_type="application/json")
 
@@ -174,8 +186,6 @@ def _build_output(captions: List[CaptionInput], segments: list) -> list:
     """
     output = []
     
-    # Use a dictionary to map segments by their text if possible, 
-    # but since we send them in order, index-based mapping is most reliable for forced alignment.
     for i, cap in enumerate(captions):
         # Default to original timing if alignment fails for this segment
         start_ms = cap.start_ms or 0
@@ -185,26 +195,29 @@ def _build_output(captions: List[CaptionInput], segments: list) -> list:
         if i < len(segments):
             seg = segments[i]
             
-            # Use segment-level timing as a fallback
-            if "start" in seg:
-                start_ms = int(seg["start"] * 1000)
-            if "end" in seg:
-                end_ms = int(seg["end"] * 1000)
-                
             # Extract word-level timing if available
             seg_words = seg.get("words", [])
             for w in seg_words:
                 if "start" in w and "end" in w:
+                    w_start = int(w["start"] * 1000)
+                    w_end = int(w["end"] * 1000)
                     cap_words.append({
                         "word": w.get("word", "").strip(),
-                        "start_ms": int(w["start"] * 1000),
-                        "end_ms": int(w["end"] * 1000),
+                        "start_ms": w_start,
+                        "end_ms": w_end,
                     })
+                    logger.debug(f"  Word: {w.get('word')} [{w_start}-{w_end}]")
             
-            # Refine segment timing using words if we found any
+            # If word alignment succeeded, use it to refine boundaries
             if cap_words:
                 start_ms = cap_words[0]["start_ms"]
                 end_ms = cap_words[-1]["end_ms"]
+            else:
+                # Fallback to segment-level timing if words are missing
+                if "start" in seg and "end" in seg:
+                    start_ms = int(seg["start"] * 1000)
+                    end_ms = int(seg["end"] * 1000)
+                logger.warning(f"No word-level alignment for caption {cap.index} ('{cap.text[:20]}...')")
 
         output.append({
             "index": cap.index,

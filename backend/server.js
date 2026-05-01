@@ -361,9 +361,8 @@ ${JSON.stringify(captions.map(c => {
 
     const cleanTextForAlignment = (text) => {
       return (text || '')
-        .replace(/<\/?[bi]>/gi, '')                // Remove <i> or <b> tags first
-        .replace(/^([A-Z][A-Z\s.\-']{1,40}:)/, '') // Then remove speaker labels like "JODY:"
-        .replace(/[^\w\s]/g, ' ')                  // Remove all other punctuation
+        .replace(/<\/?[bi]>/gi, '')                // Remove <i> or <b> tags
+        .replace(/^([A-Z][A-Z\s.\-']{1,40}:)/, '') // Remove speaker labels like "JODY:"
         .replace(/\s+/g, ' ')                      // Normalize whitespace
         .trim();
     };
