@@ -361,8 +361,9 @@ ${JSON.stringify(captions.map(c => {
 
     const cleanTextForAlignment = (text) => {
       return (text || '')
-        .replace(/^([A-Z][A-Z\s.\-']{1,40}:)/, '') // Remove speaker labels like "JODY:"
-        .replace(/<\/?[bi]>/gi, '')                // Remove <i> or <b> tags
+        .replace(/<\/?[bi]>/gi, '')                // Remove <i> or <b> tags first
+        .replace(/^([A-Z][A-Z\s.\-']{1,40}:)/, '') // Then remove speaker labels like "JODY:"
+        .replace(/[^\w\s]/g, ' ')                  // Remove all other punctuation
         .replace(/\s+/g, ' ')                      // Normalize whitespace
         .trim();
     };
@@ -380,8 +381,8 @@ ${JSON.stringify(captions.map(c => {
       if (!text || !text.trim()) continue;
 
       // Expand the window for WhisperX.
-      // A 2s buffer around the original timing is usually ideal.
-      const buffer = 2000;
+      // 5s is a good balance for significant shifts on CPU.
+      const buffer = 5000;
       const windowStart = Math.max(0, (cap.start_ms || 0) - buffer);
       // Ensure the window has some minimum duration (at least 2s)
       const windowEnd = Math.max(windowStart + 2000, (cap.end_ms || (cap.start_ms || 0) + 2000) + buffer);
