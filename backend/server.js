@@ -217,32 +217,31 @@ INPUT CAPTIONS:
 ${JSON.stringify(captions.map(c => {
   const NAME_TAG_RE = /^([A-Z][A-Z\s.\-']{1,40}:)/;
   const lines = c.text ? c.text.split('\n') : [];
-  const nameTagMatch = lines[0] && NAME_TAG_RE.test(lines[0].trim());
-  const nameTagLen = nameTagMatch ? lines[0].trim().length : 0;
-  const effectiveMax = nameTagMatch ? 60 - nameTagLen : 60;
-  
-  // Word count check for "short" captions (excluding name tags)
-  const cleanText = (c.text || '').replace(NAME_TAG_RE, '').trim();
-  const wordCount = cleanText ? cleanText.split(/\s+/).length : 0;
-  const isShort = wordCount > 0 && wordCount <= 2 && !nameTagMatch;
+    // Word count check for "short" captions (excluding tags and name tags)
+    const cleanTextForShortCheck = (c.text || '')
+      .replace(/<[^>]*>/g, '')         // Strip ALL tags
+      .replace(NAME_TAG_RE, '')        // Strip speaker label
+      .trim();
+    const wordCount = cleanTextForShortCheck ? cleanTextForShortCheck.split(/\s+/).length : 0;
+    const isShort = wordCount > 0 && wordCount <= 2 && !nameTagMatch;
 
-  // Check if any spoken line (skip name tag line) exceeds 30 chars
-  const spokenLines = nameTagMatch ? lines.slice(1) : lines;
-  const lineTooLong = spokenLines.some(l => l.trim().length > 30);
-  
-  const realTimingFlag = c.timingFlag && c.timingFlag.startsWith('Timing needs') ? c.timingFlag : null;
-  const entry = {
-    index: c.index,
-    text: c.text,
-    italic: c.italic,
-    ...(realTimingFlag ? { timing_flag: realTimingFlag } : {}),
-    ...(isShort ? { is_short: true } : {}),
-  };
-  if (lineTooLong) {
-    entry.line_too_long = true;
-    entry.effective_max_chars = effectiveMax;
-  }
-  return entry;
+    // Check if any spoken line (skip name tag line) exceeds 30 chars
+    const spokenLines = nameTagMatch ? lines.slice(1) : lines;
+    const lineTooLong = spokenLines.some(l => l.trim().length > 30);
+    
+    const realTimingFlag = c.timingFlag && c.timingFlag.startsWith('Timing needs') ? c.timingFlag : null;
+    const entry = {
+      index: c.index,
+      text: c.text,
+      italic: c.italic,
+      ...(realTimingFlag ? { timing_flag: realTimingFlag } : {}),
+      ...(isShort ? { is_short: true } : {}),
+    };
+    if (lineTooLong) {
+      entry.line_too_long = true;
+      entry.effective_max_chars = effectiveMax;
+    }
+    return entry;
 }), null, 2)}`;
 
       const geminiBody = {
@@ -367,7 +366,7 @@ ${JSON.stringify(captions.map(c => {
 
     const cleanTextForAlignment = (text) => {
       return (text || '')
-        .replace(/<\/?[bi]>/gi, '')                // Remove <i> or <b> tags
+        .replace(/<[^>]*>/g, '')                   // Remove ALL HTML tags
         .replace(/^([A-Z][A-Z\s.\-']{1,40}:)/, '') // Remove speaker labels like "JODY:"
         .replace(/\s+/g, ' ')                      // Normalize whitespace
         .trim();
@@ -450,6 +449,14 @@ ${JSON.stringify(captions.map(c => {
         try {
           whisperxResult = JSON.parse(rawText.trim());
           console.log(`[/api/refine] WhisperX parsed successfully: ${whisperxResult.captions?.length || 0} segments returned`);
+          
+          // Log failures
+          const requestedIndices = new Set(textForAlignment.map(t => t.index));
+          const receivedIndices = new Set(whisperxResult.captions?.map(c => c.index));
+          const missing = [...requestedIndices].filter(i => !receivedIndices.has(i));
+          if (missing.length > 0) {
+            console.warn(`[/api/refine] WhisperX missed ${missing.length} segments: ${missing.join(', ')}`);
+          }
         } catch (e) {
           whisperxError = `Failed to parse WhisperX JSON: ${e.message}`;
           console.warn(whisperxError, rawText.slice(0, 100));
@@ -460,10 +467,15 @@ ${JSON.stringify(captions.map(c => {
       console.warn(whisperxError);
     }
 
+    const missed = textForAlignment
+      .filter(t => !whisperxResult || !whisperxResult.captions.some(c => c.index === t.index))
+      .map(t => t.index);
+
     stages.whisperx = {
       duration_ms: Date.now() - whisperxStartTime,
       status: whisperxError ? 'failed' : 'success',
-      error: whisperxError
+      error: whisperxError,
+      missed_segments: missed
     };
 
     // Map WhisperX results back to captions
@@ -473,7 +485,8 @@ ${JSON.stringify(captions.map(c => {
         // No WORD_START_OFFSET_MS as requested by user
         assignedTiming.set(aligned.index, {
           startMs: aligned.start_ms,
-          endMs: aligned.end_ms
+          endMs: aligned.end_ms,
+          words: aligned.words
         });
       }
     }
@@ -558,7 +571,8 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
       original_text: cap.text,
       timing_flag: cap.timingFlag || null,
       timing_changed: timingWasChanged,
-      partial: isPartial
+      partial: isPartial,
+      words: assigned ? assigned.words : null
     };
   });
 
@@ -594,29 +608,36 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
     surviving = surviving.filter((_, i) => !dedupFlags[i]);
   }
 
-    // Clamp overlaps sequentially
-    const MAX_OVERLAP_MS = 100;
-    const MIN_DURATION_MS = 500;
-    for (let i = 1; i < surviving.length; i++) {
-      if (surviving[i].start_ms < (surviving[i - 1].end_ms - MAX_OVERLAP_MS)) {
-        surviving[i].start_ms = surviving[i - 1].end_ms;
-      }
-      // Ensure a readable minimum duration
-      if (surviving[i].end_ms < (surviving[i].start_ms + MIN_DURATION_MS)) {
-        surviving[i].end_ms = surviving[i].start_ms + MIN_DURATION_MS;
-      }
-    }
 
-  // Snap-to-next: close small gaps between adjacent captions.
-  // Within-chain gaps are already eliminated by the word-boundary assignment above;
-  // this handles residual gaps at chain/unchanged boundaries and Stage 1 captions.
-  const SNAP_THRESHOLD_MS = 500; // Reduced from 1000ms to prevent sluggish feel
-  for (let i = 0; i < surviving.length - 1; i++) {
-    const gap = surviving[i + 1].start_ms - surviving[i].end_ms;
-    if (gap > 0 && gap < SNAP_THRESHOLD_MS) {
-      surviving[i].end_ms = surviving[i + 1].start_ms;
+    // Refined Gap-Filler & Overlap Resolver
+    const MIN_DURATION_MS = 300;
+    const MAX_GAP_FILL_MS = 2000; // Only fill gaps up to 2 seconds of silence
+
+    for (let i = 1; i < surviving.length; i++) {
+      const prev = surviving[i - 1];
+      const curr = surviving[i];
+
+      const gap = curr.start_ms - prev.end_ms;
+
+      if (gap < 0) {
+        // OVERLAP: Split the difference (Midpoint Resolution)
+        const midpoint = Math.floor((prev.end_ms + curr.start_ms) / 2);
+        if (midpoint > prev.start_ms + MIN_DURATION_MS) {
+          prev.end_ms = midpoint;
+          curr.start_ms = midpoint;
+        } else {
+          curr.start_ms = prev.end_ms;
+        }
+      } else if (gap > 0 && gap < MAX_GAP_FILL_MS) {
+        // GAP: Push end of 'prev' forward to fill the gap
+        prev.end_ms = curr.start_ms;
+      }
+
+      // Final safety check for duration
+      if (curr.end_ms < (curr.start_ms + MIN_DURATION_MS)) {
+        curr.end_ms = curr.start_ms + MIN_DURATION_MS;
+      }
     }
-  }
 
   return surviving;
 }
