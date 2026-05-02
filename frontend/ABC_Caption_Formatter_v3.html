@@ -786,7 +786,7 @@ function preprocessMidSpeakers(captions) {
           const combined = `${caps[i - 1].text} ${mid.before}`.replace(/\s+/g, ' ').trim();
           caps[i - 1].text = combined;
           caps[i - 1].timingFlag = combined.length > 60
-            ? '⚠ Line too long after merge — split manually in Premiere'
+            ? 'Timing needs — line too long after merge, redistribute or split'
             : 'Timing needs — text moved from next caption';
         }
       } else {
@@ -815,7 +815,7 @@ function preprocessMidSpeakers(captions) {
         const combined = `${toAppend} ${caps[i + 1].text}`.trim();
         caps[i + 1].text = combined;
         caps[i + 1].timingFlag = combined.length > 60
-          ? '⚠ Line too long after ellipsis merge — split manually in Premiere'
+          ? 'Timing needs — line too long after ellipsis merge, redistribute or split'
           : 'Timing needs — ellipsis moved from previous caption';
       }
     }
@@ -912,7 +912,9 @@ function processCaptions(captions, boldIdx) {
             o.timingFlag = 'Timing needs — lead-in moved to previous caption';
             out.push(o);
           } else {
-            out.push({ start:cap.start, end:cap.end, lines:splitLines(cap.text), italic:true });
+            const o = { start:cap.start, end:cap.end, lines:splitLines(cap.text), italic:true };
+            if (cap.timingFlag) o.timingFlag = cap.timingFlag;
+            out.push(o);
           }
 
         } else {

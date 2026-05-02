@@ -165,8 +165,8 @@ You will receive audio and a list of captions that have been auto-formatted from
 
 Your job: review the captions against what is actually said in the audio, and suggest improvements where caption breaks fall in awkward places.
 
-MINIMAL CHANGES RULE:
-Only suggest changes where they significantly improve readability, fix technical errors (like line length), or correct major phrasing awkwardness. If a caption is already clear and follows the formatting rules, LEAVE IT UNTOUCHED. Do not suggest changes for minor stylistic reasons.
+QUALITY THRESHOLD:
+Suggest changes where they improve readability or fix caption breaks that feel awkward against the audio — a break mid-phrase, a name split, a thought that should stay together, or a boundary that doesn't match where the speaker naturally pauses. You don't need to change every caption, but don't hold back on genuine improvements. Avoid purely cosmetic changes where the current version already reads clearly.
 
 THE GOLDEN RULE: ZERO TEXT LOSS
 You MUST NOT edit, rephrase, or omit any words from the original captions. Your only task is to move the boundaries (the breaks) between captions. Every word in the input must appear exactly once in your output. No words can be added, and NO words can be deleted unless the entire caption is being merged into another.
@@ -176,7 +176,7 @@ PRIORITISE:
 - Abnormally short captions (e.g. 1-2 words) — merge these with neighbors to improve flow unless they are name tags or represent significant dramatic pauses.
 - Captions where a person's name is split across two captions
 - Caption breaks that fall mid-phrase or mid-thought when the audio has a natural pause elsewhere
-- Captions that combine end-of-one-thought + start-of-another (should split)
+- Captions that combine end-of-one-thought + start-of-another — prefer moving the boundary with a neighboring caption; only split if redistribution is blocked by name tag or italic rules
 
 CRITICAL RULES FOR MOVING TEXT:
 1. If you move words from one caption to another, you MUST return an update for BOTH captions to prevent duplicating text!
@@ -195,6 +195,9 @@ Never suggest changes that would merge text across italic/non-italic boundaries.
 - If caption N is italic and caption N+1 is not italic (or vice versa), do NOT move text between them.
 - Each caption must be ENTIRELY italic or ENTIRELY non-italic.
 - If you need extra room to fix a long line but the neighbor has a different italic state, you MUST SPLIT the caption into two rather than crossing the boundary.
+
+SPLIT IS A LAST RESORT:
+Only use change_type "split" when you cannot move words to a neighboring caption because the name tag rule or italic boundary rule blocks redistribution AND the caption is genuinely too long. For all other cases — including "end-of-one-thought + start-of-another" — use phrase_break or merge to shift the boundary between existing captions instead.
 
 DO NOT CHANGE:
 - The actual words spoken (ZERO text loss!)
