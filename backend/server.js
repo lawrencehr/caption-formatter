@@ -356,12 +356,21 @@ ${JSON.stringify(captions.map(c => {
     }
     if (!Array.isArray(acceptedSuggestions)) acceptedSuggestions = [];
 
-    console.log(`[/api/refine] Phase 2: WhisperX for ${captions.length} captions, ${acceptedSuggestions.length} accepted changes`);
+    // Captions that need WhisperX timing: Stage 1 reshuffled their text, or AI changed them
+    const timingUpdateNeeded = new Set();
+    for (const cap of captions) {
+      if (cap.timingFlag) timingUpdateNeeded.add(cap.index);
+    }
+    for (const s of acceptedSuggestions) {
+      timingUpdateNeeded.add(s.caption_index);
+    }
+
+    console.log(`[/api/refine] Phase 2: WhisperX for ${captions.length} captions, ${acceptedSuggestions.length} accepted changes, ${timingUpdateNeeded.size} need timing updates`);
 
     const whisperxURL = process.env.WHISPERX_URL;
     if (!whisperxURL) {
       console.warn('WHISPERX_URL not configured, returning accepted text with original timing');
-      const fallbackResult = _mergeCaptionSuggestions(captions, acceptedSuggestions, true, new Map());
+      const fallbackResult = _mergeCaptionSuggestions(captions, acceptedSuggestions, true, new Map(), new Set());
       return res.json({
         status: 'partial',
         error: 'WhisperX not configured — using accepted text with original timing',
@@ -462,24 +471,42 @@ ${JSON.stringify(captions.map(c => {
       console.log(`[/api/refine] Matched ${matchedCount}/${captions.length} captions (${((matchedCount / captions.length) * 100).toFixed(0)}%)`);
     }
 
+    // Only apply WhisperX timing to captions that actually need it
+    const filteredTiming = new Map(
+      [...assignedTiming].filter(([idx]) => timingUpdateNeeded.has(idx))
+    );
+
+    // Captions that needed a timing update but WhisperX couldn't match them
+    const suggestionsMapForFailed = new Map(acceptedSuggestions.map(s => [s.caption_index, s]));
+    const timingUpdateFailed = new Set();
+    for (const idx of timingUpdateNeeded) {
+      const sugg = suggestionsMapForFailed.get(idx);
+      const isDeleted = sugg && (sugg.change_type === 'delete' || !sugg.new_text || sugg.new_text.trim() === '');
+      if (!isDeleted && !filteredTiming.has(idx)) {
+        timingUpdateFailed.add(idx);
+      }
+    }
+
     const missed = captions
       .filter((_, i) => !matchResults[i])
       .map(c => c.index);
 
     stages.whisperx = {
-      duration_ms:       Date.now() - whisperxStartTime,
-      status:            whisperxError ? 'failed' : 'success',
-      error:             whisperxError,
-      words_transcribed: whisperxResult?.words?.length || 0,
-      matched:           captions.length - missed.length,
-      missed_segments:   whisperxError ? [] : missed,
+      duration_ms:          Date.now() - whisperxStartTime,
+      status:               whisperxError ? 'failed' : 'success',
+      error:                whisperxError,
+      words_transcribed:    whisperxResult?.words?.length || 0,
+      matched:              captions.length - missed.length,
+      missed_segments:      whisperxError ? [] : missed,
+      timing_update_failed: whisperxError ? [...timingUpdateNeeded] : [...timingUpdateFailed],
     };
 
     const mergedCaptions = _mergeCaptionSuggestions(
       captions,
       acceptedSuggestions,
       !!whisperxError,
-      assignedTiming
+      filteredTiming,
+      timingUpdateFailed
     );
 
     // Gemini-only version: accepted text + Stage 1 timing (no WhisperX changes).
@@ -487,7 +514,8 @@ ${JSON.stringify(captions.map(c => {
       captions,
       acceptedSuggestions,
       true,
-      new Map()
+      new Map(),
+      new Set()
     );
 
     console.log(`[/api/refine] Phase 2 complete in ${Date.now() - startTime}ms`);
@@ -512,7 +540,7 @@ ${JSON.stringify(captions.map(c => {
 });
 
 // Helper: Merge accepted suggestions + assigned WhisperX timing into original captions.
-function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assignedTiming = new Map()) {
+function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assignedTiming = new Map(), timingUpdateFailed = new Set()) {
   const suggestionsMap = new Map(suggestions.map(s => [s.caption_index, s]));
 
   const merged = originalCaptions.map(cap => {
@@ -553,11 +581,13 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
       change_type: isChanged ? suggestion.change_type : null,
       reason: isChanged ? suggestion.reason : null,
       original_text: cap.text,
-      timing_flag: cap.timingFlag || null,
-      timing_changed:  timingWasChanged,
-      partial:         isPartial,
-      words:           assigned ? assigned.words        : null,
-      matched_ratio:   assigned ? assigned.matchedRatio : null,
+      timing_flag:          cap.timingFlag || null,
+      timing_changed:       timingWasChanged,
+      timing_source:        assigned ? 'whisperx' : 'stage1',
+      timing_update_failed: timingUpdateFailed.has(cap.index),
+      partial:              isPartial,
+      words:                assigned ? assigned.words        : null,
+      matched_ratio:        assigned ? assigned.matchedRatio : null,
     };
   });
 
@@ -594,20 +624,38 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
   }
 
 
-  // Ensure 240ms minimum duration and resolve overlaps by trimming ends only.
-  // Never move start_ms — it is the matched word boundary from the transcript.
+  // Ensure 240ms minimum duration for all captions.
   const MIN_DURATION_MS = 240;
-  for (let i = 0; i < surviving.length; i++) {
-    const c = surviving[i];
+  for (const c of surviving) {
     if (c.end_ms < c.start_ms + MIN_DURATION_MS) {
       c.end_ms = c.start_ms + MIN_DURATION_MS;
     }
-    if (i > 0) {
-      const prev = surviving[i - 1];
-      if (prev.end_ms > c.start_ms) {
-        prev.end_ms = Math.max(prev.start_ms + MIN_DURATION_MS, c.start_ms);
+  }
+
+  // Resolve overlaps. Stage 1 timing takes precedence over WhisperX: if a Stage 1
+  // caption's end overlaps a WhisperX caption's start, push the WhisperX start
+  // forward rather than trimming the Stage 1 end.
+  for (let i = 1; i < surviving.length; i++) {
+    const prev = surviving[i - 1];
+    const curr = surviving[i];
+    if (prev.end_ms > curr.start_ms) {
+      if (prev.timing_source === 'stage1' && curr.timing_source === 'whisperx') {
+        curr.start_ms = prev.end_ms;
+        if (curr.end_ms < curr.start_ms + MIN_DURATION_MS) {
+          curr.end_ms = curr.start_ms + MIN_DURATION_MS;
+        }
+      } else {
+        prev.end_ms = Math.max(prev.start_ms + MIN_DURATION_MS, curr.start_ms);
       }
     }
+  }
+
+  // Butt captions together — close any gaps so there is no blank-screen time between captions.
+  for (let i = 0; i < surviving.length - 1; i++) {
+    surviving[i].end_ms = Math.max(
+      surviving[i].start_ms + MIN_DURATION_MS,
+      surviving[i + 1].start_ms
+    );
   }
 
   return surviving;

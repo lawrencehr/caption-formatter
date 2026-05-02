@@ -1385,6 +1385,7 @@ async function downloadRefinedSRT() {
         change_type: c.change_type,
         reason: c.reason,
         timing_changed: timingChanged,
+        timing_update_failed: c.timing_update_failed || false,
         original_text: c.original_text,
         cap_index: c.index,
       };
@@ -1499,6 +1500,7 @@ function setPreviewFilter(filter) {
 function renderFinalPreview(captions) {
   const changedGemini = captions.filter(c => c.changed).length;
   const changedWhisper = captions.filter(c => c.timing_changed && !c.changed).length;
+  const failedCount = captions.filter(c => c.timing_update_failed).length;
   const warnCount = captions.filter(c => getCaptionWarnings(c).length > 0).length;
 
   document.getElementById('final-caption-count').textContent =
@@ -1506,10 +1508,11 @@ function renderFinalPreview(captions) {
 
   const changedPill = document.getElementById('final-changed-count');
   const totalChanged = changedGemini + changedWhisper;
-  if (totalChanged > 0 || warnCount > 0) {
+  if (totalChanged > 0 || failedCount > 0 || warnCount > 0) {
     const parts = [];
     if (changedGemini) parts.push(changedGemini + ' AI');
     if (changedWhisper) parts.push(changedWhisper + ' timing');
+    if (failedCount) parts.push(failedCount + ' timing ⚠');
     if (warnCount) parts.push(warnCount + ' warn');
     changedPill.textContent = parts.join(' · ');
     changedPill.style.display = '';
@@ -1525,7 +1528,7 @@ function renderFinalPreview(captions) {
     if (previewFilter === 'all') return true;
     if (previewFilter === 'changed') return c.changed;
     if (previewFilter === 'timing') return c.timing_changed && !c.changed;
-    if (previewFilter === 'warn') return getCaptionWarnings(c).length > 0;
+    if (previewFilter === 'warn') return getCaptionWarnings(c).length > 0 || c.timing_update_failed;
     return true;
   });
 
@@ -1571,6 +1574,9 @@ function renderFinalPreview(captions) {
       tagHtml = '<span class="' + tagCls + '" title="' + esc(ct) + '">' + esc(shortLabel) + '</span>';
     } else if (isWhisper) {
       tagHtml = '<span class="final-tag whisper">TIMING</span>';
+    }
+    if (c.timing_update_failed) {
+      tagHtml += '<span class="final-tag delete" title="WhisperX could not match this caption — timing may be inaccurate, review manually">TIMING ⚠</span>';
     }
 
     // Timing-was line for WhisperX-changed captions
