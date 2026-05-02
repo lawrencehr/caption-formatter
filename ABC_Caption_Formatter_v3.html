@@ -1193,7 +1193,7 @@ document.getElementById('btn-skip-refinement').addEventListener('click', () => {
 async function refineWithAI() {
   if (!stage2Audio) return;
   if (!API_SECRET) {
-    API_SECRET = prompt('Please enter the server Shared Secret (e.g. lalaqueen):') || '';
+    API_SECRET = prompt('Please enter the server Shared Secret:') || '';
     if (!API_SECRET) {
       alert('A Shared Secret is required to connect to the server.');
       return;
@@ -1332,7 +1332,7 @@ function updateAcceptedSet() {
 async function downloadRefinedSRT() {
   if (!stage2Audio || stage2OriginalCaptions.length === 0) return;
   if (!API_SECRET) {
-    API_SECRET = prompt('Please enter the server Shared Secret (e.g. lalaqueen):') || '';
+    API_SECRET = prompt('Please enter the server Shared Secret:') || '';
     if (!API_SECRET) {
       alert('A Shared Secret is required to connect to the server.');
       return;
