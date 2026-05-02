@@ -173,7 +173,7 @@ You MUST NOT edit, rephrase, or omit any words from the original captions. Your 
 
 PRIORITISE:
 - Captions with a timing_flag field — their text has been moved by the Stage 1 formatter so boundaries are known to be wrong. Suggest the boundary placement that best fits the audio even if the text looks readable as-is.
-- Abnormally short captions (e.g. 1-2 words) — merge these with neighbors to improve flow unless they are name tags or represent significant dramatic pauses.
+- Short captions (e.g. 1-3 words, flagged with is_short) — merge these with neighbors to improve flow unless they are name tags, or consist of a single emphatic word with an unmistakable audio pause both before and after.
 - Captions where a person's name is split across two captions
 - Caption breaks that fall mid-phrase or mid-thought when the audio has a natural pause elsewhere
 - Captions that combine end-of-one-thought + start-of-another — prefer moving the boundary with a neighboring caption; only split if redistribution is blocked by name tag or italic rules
@@ -236,7 +236,7 @@ ${JSON.stringify(captions.map(c => {
       .replace(NAME_TAG_RE, '')        // Strip speaker label
       .trim();
     const wordCount = cleanTextForShortCheck ? cleanTextForShortCheck.split(/\s+/).length : 0;
-    const isShort = wordCount > 0 && wordCount <= 2 && !nameTagMatch;
+    const isShort = wordCount > 0 && wordCount <= 3 && !nameTagMatch;
 
     // Check if any spoken line (skip name tag line) exceeds 30 chars
     const spokenLines = nameTagMatch ? lines.slice(1) : lines;
