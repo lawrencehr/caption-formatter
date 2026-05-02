@@ -707,8 +707,6 @@ function preprocessMidSpeakers(captions) {
       if (/^[A-Z][A-Z\s]{0,20}:/.test(caps[i + 1].text)) {
         cap.text = splitName[1].trim();
         caps[i + 1].text = `${lastName} ${caps[i + 1].text}`;
-        cap.timingFlag = 'Timing adjusted — name moved to next caption';
-        caps[i + 1].timingFlag = 'Timing adjusted — name merged from previous caption';
       }
     }
 
@@ -731,10 +729,9 @@ function preprocessMidSpeakers(captions) {
       } else {
         // END: keep "before", push label to next
         cap.text = mid.before;
-        cap.timingFlag = 'Timing adjusted — speaker label pushed to next caption';
+        cap.isLabelPush = true;
         if (i + 1 < caps.length) {
           caps[i + 1].text = `${mid.speaker}: ${caps[i + 1].text}`.trim();
-          caps[i + 1].timingFlag = 'Timing adjusted — speaker label moved from previous caption';
         }
       }
       continue;
@@ -749,14 +746,14 @@ function preprocessMidSpeakers(captions) {
       const ellipsis = ellipsisM[2].trim();
       const after    = ellipsisM[3].trim();
       cap.text = before + ':';
-      cap.timingFlag = 'Timing adjusted — ellipsis pushed to next caption';
+      cap.timingFlag = 'Timing needs — ellipsis pushed to next caption';
       if (i + 1 < caps.length) {
         const toAppend = after ? `${ellipsis} ${after}` : ellipsis;
         const combined = `${toAppend} ${caps[i + 1].text}`.trim();
         caps[i + 1].text = combined;
         caps[i + 1].timingFlag = combined.length > 60
           ? '⚠ Line too long after ellipsis merge — split manually in Premiere'
-          : 'Timing adjusted — ellipsis moved from previous caption';
+          : 'Timing needs — ellipsis moved from previous caption';
       }
     }
   }
@@ -835,8 +832,7 @@ function processCaptions(captions, boldIdx) {
       } else {
         // Captions ending with ":" that were produced by a label-push in preprocessing
         // are host narration fragments — force plain regardless of italic index
-        const isLabelPush = cap.text.trim().endsWith(':') &&
-                            cap.timingFlag && cap.timingFlag.includes('pushed');
+        const isLabelPush = cap.text.trim().endsWith(':') && !!cap.isLabelPush;
 
         const italic = isLabelPush ? false : shouldBeItalic(cap.text, boldIdx);
 
