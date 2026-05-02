@@ -172,7 +172,7 @@ THE GOLDEN RULE: ZERO TEXT LOSS
 You MUST NOT edit, rephrase, or omit any words from the original captions. Your only task is to move the boundaries (the breaks) between captions. Every word in the input must appear exactly once in your output. No words can be added, and NO words can be deleted unless the entire caption is being merged into another.
 
 PRIORITISE:
-- Captions flagged with "⚠" — these are known to have timing issues
+- Captions with a timing_flag field — their text has been moved by the Stage 1 formatter so boundaries are known to be wrong. Suggest the boundary placement that best fits the audio even if the text looks readable as-is.
 - Abnormally short captions (e.g. 1-2 words) — merge these with neighbors to improve flow unless they are name tags or represent significant dramatic pauses.
 - Captions where a person's name is split across two captions
 - Caption breaks that fall mid-phrase or mid-thought when the audio has a natural pause elsewhere
@@ -182,6 +182,7 @@ CRITICAL RULES FOR MOVING TEXT:
 1. If you move words from one caption to another, you MUST return an update for BOTH captions to prevent duplicating text!
 2. DO NOT DUPLICATE WORDS across captions.
 3. CHAIN COMPLETENESS: when you shift text through a sequence, EVERY caption in the chain must have an update. If caption N consumes words from N+1, then N+1 MUST also have an update — either with its new shifted text, or with new_text="" if it was fully absorbed.
+   Bad example: caption 5 absorbs "the decision" from caption 6 but no update is returned for caption 6 — "the decision" now appears in both captions.
 
 NAME TAG RULE:
 A speaker name tag (e.g. "LIAM BARTLETT:", "CHRIS BOWEN:") MUST always remain as the FIRST LINE of its own caption.
@@ -206,15 +207,18 @@ Return ONLY a JSON array. No preamble. No markdown. If no changes needed, return
 For each change, specify:
 - caption_index: the 1-based index from the input
 - new_text: the suggested replacement text (or "" if deleted)
-- change_type: "phrase_break" | "name_kept_together" | "timing_only" | "split" | "merge" | "delete"
+- change_type: "phrase_break" | "name_kept_together" | "split" | "merge" | "delete"
 - reason: 1-sentence explanation
+- split_remainder: (splits only) the second half of the text — the formatter inserts this as a new caption immediately after
+
+For a split: set new_text to the first half and split_remainder to the second half. Return ONE entry only — do not also create a separate entry for the following caption.
 
 LINE LENGTH RULE:
 Each caption is displayed on up to 2 lines, max 30 characters per line (60 total for normal captions).
 Captions with a speaker name tag (e.g. "JOHN SMITH:") always use the first line for the name tag, leaving only the second line for spoken text.
 - For these, you MUST fit the spoken text within the provided effective_max_chars (which is 60 minus the name tag length).
 - If a caption is flagged with line_too_long: true, you MUST fix the overflow.
-- If you cannot move words to a neighbor (because of name tags or italic boundaries), you MUST SPLIT the caption into two separate captions instead.
+- If you cannot move words to a neighbor (because of name tags or italic boundaries), you MUST SPLIT the caption using change_type "split" with new_text as the first half and split_remainder as the second half.
 - NO suggested caption should ever exceed 60 characters total.
 Write new_text as a flat string with NO line breaks — the formatter will split it automatically.
 
@@ -541,6 +545,7 @@ ${JSON.stringify(captions.map(c => {
 
 // Helper: Merge accepted suggestions + assigned WhisperX timing into original captions.
 function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assignedTiming = new Map(), timingUpdateFailed = new Set()) {
+  const MIN_DURATION_MS = 240;
   const suggestionsMap = new Map(suggestions.map(s => [s.caption_index, s]));
 
   const merged = originalCaptions.map(cap => {
@@ -548,12 +553,16 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
     const isChanged = !!suggestion;
 
     let newText;
+    let splitRemainder = null;
     if (isChanged) {
       const isDelete = suggestion.change_type === 'delete' ||
         suggestion.new_text === null ||
         suggestion.new_text === undefined ||
         (typeof suggestion.new_text === 'string' && suggestion.new_text.trim() === '');
       newText = isDelete ? '' : suggestion.new_text;
+      if (suggestion.change_type === 'split' && suggestion.split_remainder?.trim()) {
+        splitRemainder = suggestion.split_remainder.trim();
+      }
     } else {
       newText = cap.text;
     }
@@ -588,6 +597,7 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
       partial:              isPartial,
       words:                assigned ? assigned.words        : null,
       matched_ratio:        assigned ? assigned.matchedRatio : null,
+      ...(splitRemainder ? { _splitRemainder: splitRemainder } : {}),
     };
   });
 
@@ -623,9 +633,39 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
     surviving = surviving.filter((_, i) => !dedupFlags[i]);
   }
 
+  // Expand splits: insert remainder caption immediately after the split parent.
+  // The remainder starts where the parent ends; WhisperX didn't match it so it
+  // is flagged timing_update_failed for manual review.
+  if (surviving.some(c => c._splitRemainder)) {
+    const expanded = [];
+    for (const cap of surviving) {
+      expanded.push(cap);
+      if (cap._splitRemainder) {
+        expanded.push({
+          index:                cap.index + 0.5,
+          text:                 cap._splitRemainder,
+          italic:               cap.italic,
+          start_ms:             cap.end_ms,
+          end_ms:               cap.end_ms + MIN_DURATION_MS,
+          changed:              true,
+          change_type:          'split',
+          reason:               cap.reason,
+          original_text:        '',
+          timing_flag:          null,
+          timing_changed:       false,
+          timing_source:        'whisperx',
+          timing_update_failed: true,
+          partial:              isPartial,
+          words:                null,
+          matched_ratio:        null,
+        });
+        delete cap._splitRemainder;
+      }
+    }
+    surviving = expanded;
+  }
 
   // Ensure 240ms minimum duration for all captions.
-  const MIN_DURATION_MS = 240;
   for (const c of surviving) {
     if (c.end_ms < c.start_ms + MIN_DURATION_MS) {
       c.end_ms = c.start_ms + MIN_DURATION_MS;

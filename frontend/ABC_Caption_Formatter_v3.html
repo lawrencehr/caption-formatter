@@ -1549,7 +1549,9 @@ function renderFinalPreview(captions) {
     const timeCol = document.createElement('div');
     timeCol.className = 'cap-time';
 
-    const captionNum = c.cap_index || c.index || '';
+    const captionNum = Number.isInteger(c.cap_index)
+      ? c.cap_index
+      : (c.cap_index ? Math.floor(c.cap_index) + 'b' : '');
     const startTime = fmtTime(c.start || 0).slice(0, 12); // HH:MM:SS,mmm
     const startDisplay = startTime.slice(0, 8) + '<span style="opacity:0.5;">' + startTime.slice(8) + '</span>';
     const durSec = ((c.end || 0) - (c.start || 0)) / 1000;
