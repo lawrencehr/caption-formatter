@@ -8,7 +8,7 @@ echo ===========================================
 echo.
 
 set PORT=3000
-set WHISPERX_URL=http://localhost:8765
+set WHISPERX_URL=http://127.0.0.1:8765
 
 :: Note: Anthropic key is only used for the /api/review endpoint.
 :: If you don't use that feature, it can remain empty.

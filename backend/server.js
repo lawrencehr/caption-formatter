@@ -380,10 +380,9 @@ ${JSON.stringify(captions.map(c => {
     let whisperxError = null;
     const whisperxStartTime = Date.now();
 
-    try {
-      console.log(`[/api/refine] Sending audio to WhisperX for full transcription (${audioBuffer.length} bytes)...`);
-
-      const whisperxResponse = await fetch(`${whisperxURL}/transcribe`, {
+    async function tryWhisperX(url) {
+      console.log(`[/api/refine] Attempting WhisperX at ${url}/transcribe...`);
+      return await fetch(`${url}/transcribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Secret': process.env.SHARED_SECRET },
         body: JSON.stringify({
@@ -392,6 +391,20 @@ ${JSON.stringify(captions.map(c => {
         }),
         timeout: 300000
       });
+    }
+
+    try {
+      let whisperxResponse;
+      try {
+        whisperxResponse = await tryWhisperX(whisperxURL);
+      } catch (e) {
+        const fallbackURL = whisperxURL.includes('127.0.0.1') 
+          ? whisperxURL.replace('127.0.0.1', 'localhost')
+          : whisperxURL.replace('localhost', '127.0.0.1');
+        
+        console.warn(`[/api/refine] Primary WhisperX failed (${e.message}), trying fallback: ${fallbackURL}`);
+        whisperxResponse = await tryWhisperX(fallbackURL);
+      }
 
       if (!whisperxResponse.ok) {
         whisperxError = `WhisperX error: ${whisperxResponse.status}`;
@@ -418,8 +431,20 @@ ${JSON.stringify(captions.map(c => {
 
     if (whisperxResult && Array.isArray(whisperxResult.words)) {
       const whisperWords = whisperxResult.words.filter(w => w.start_ms != null && w.end_ms != null);
-      console.log(`[/api/refine] Matching ${captions.length} captions to ${whisperWords.length} transcript words...`);
-      matchResults = matchCaptionsToTranscript(captions, whisperWords);
+      
+      // Use refined Gemini text for matching (otherwise alignment fails on changed text)
+      const suggestionsMap = new Map(acceptedSuggestions.map(s => [s.caption_index, s]));
+      const captionsForMatching = captions.map(cap => {
+        const sugg = suggestionsMap.get(cap.index);
+        if (sugg) {
+          const isDelete = sugg.change_type === 'delete' || !sugg.new_text || sugg.new_text.trim() === '';
+          return { ...cap, text: isDelete ? '' : sugg.new_text };
+        }
+        return cap;
+      });
+
+      console.log(`[/api/refine] Matching ${captionsForMatching.length} captions to ${whisperWords.length} transcript words...`);
+      matchResults = matchCaptionsToTranscript(captionsForMatching, whisperWords);
 
       let matchedCount = 0;
       for (let i = 0; i < captions.length; i++) {
