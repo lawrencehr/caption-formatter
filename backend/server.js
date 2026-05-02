@@ -468,7 +468,7 @@ ${JSON.stringify(captions.map(c => {
         if (match) {
           matchedCount++;
           assignedTiming.set(captions[i].index, {
-            startMs:      match.startMs,
+            startMs:      Math.max(0, match.startMs - 100),  // 100ms lead-in before first word
             endMs:        match.endMs + 200,  // 200ms natural tail
             words:        match.words,
             matchedRatio: match.matchedRatio,
@@ -699,15 +699,6 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
       surviving[i].start_ms + MIN_DURATION_MS,
       surviving[i + 1].start_ms
     );
-  }
-
-  // Trim 100ms from WhisperX-retimed caption ends to prevent audio bleed from
-  // the next caption's pre-word onset (breath, consonant) landing inside the
-  // current caption's display window.
-  for (const c of surviving) {
-    if (c.timing_source === 'whisperx') {
-      c.end_ms = Math.max(c.start_ms + MIN_DURATION_MS, c.end_ms - 100);
-    }
   }
 
   return surviving;
