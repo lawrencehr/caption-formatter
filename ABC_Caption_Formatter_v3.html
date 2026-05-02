@@ -446,7 +446,9 @@ let stage2GeminiOnlyCaptions = null;  // AI text edits with original Stage 1 tim
 let previewFilter           = 'all';  // 'all' | 'changed' | 'timing' | 'warn'
 let previewAudioURL         = null;   // ObjectURL for stage2Audio
 let previewAudioTimer       = null;   // setTimeout id for stopping playback at end_ms
-const API_BASE_URL       = 'https://abc-captions.onrender.com'; // Point to live Render proxy
+const API_BASE_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || !window.location.hostname)
+  ? 'http://localhost:3000'
+  : 'https://abc-captions.onrender.com';
 let API_SECRET           = ''; // Fetched via prompt on first use
 
 // ── UTILITIES ─────────────────────────────────────────────────────────────────
