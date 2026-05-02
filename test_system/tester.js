@@ -34,9 +34,31 @@ async function main() {
   }));
   console.log(`Loaded ${captions.length} captions.`);
 
-  // 2. Skip Phase 1 (Gemini)
-  console.log('\n--- SKIPPING PHASE 1 (GEMINI) ---');
-  const suggestions = [];
+  // 2. Phase 1 (Gemini)
+  console.log('\n--- PHASE 1: GEMINI ---');
+  console.log('Sending request to /api/refine (Phase 1)...');
+  
+  const phase1FormData = new FormData();
+  phase1FormData.append('audio', new Blob([fs.readFileSync(AUDIO_FILE)]), path.basename(AUDIO_FILE));
+  phase1FormData.append('captions', JSON.stringify(captions));
+
+  const p1StartTime = Date.now();
+  const p1Response = await fetch(`${PROXY_URL}/api/refine`, {
+    method: 'POST',
+    headers: { 'X-Secret': SHARED_SECRET },
+    body: phase1FormData,
+  });
+
+  if (!p1Response.ok) {
+    console.error('Phase 1 failed:', p1Response.status);
+    console.error(await p1Response.text());
+    process.exit(1);
+  }
+
+  const p1Result = await p1Response.json();
+  console.log(`Phase 1 took ${Date.now() - p1StartTime}ms`);
+  const suggestions = p1Result.suggestions || [];
+  console.log(`Gemini returned ${suggestions.length} suggestions.`);
 
   // 3. Phase 2: WhisperX Alignment
   console.log('\n--- PHASE 2: WHISPERX ---');

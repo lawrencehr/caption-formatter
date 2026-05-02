@@ -1,5 +1,12 @@
 import base64
 import os
+os.environ["HF_HUB_OFFLINE"] = "0"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+if os.name == 'nt':
+    try:
+        os.add_dll_directory(r"C:\ffmpeg\bin")
+    except Exception:
+        pass
 import tempfile
 import logging
 from contextlib import asynccontextmanager
@@ -23,22 +30,34 @@ WHISPER_MODEL = os.getenv("WHISPER_MODEL", "medium")
 # Models loaded once at startup
 _align_model = None
 _align_metadata = None
+_whisper_model = None
 _device = "cpu"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _align_model, _align_metadata, _device
+    global _align_model, _align_metadata, _whisper_model, _device
 
     import torch
     _device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Device: {_device}")
 
-    logger.info("Loading WhisperX alignment model (wav2vec2 English)...")
     import whisperx
+    compute_type = "int8" if _device == "cpu" else "float16"
+
+    logger.info("Loading WhisperX alignment model (wav2vec2 English)...")
     _align_model, _align_metadata = whisperx.load_align_model(
         language_code="en", device=_device
     )
     logger.info("Alignment model ready.")
+
+    model_dir = os.path.join(os.path.dirname(__file__), "models")
+    os.makedirs(model_dir, exist_ok=True)
+    logger.info(f"Loading WhisperX ASR model ({WHISPER_MODEL}, {compute_type}) → {model_dir}")
+    _whisper_model = whisperx.load_model(
+        WHISPER_MODEL, _device, compute_type=compute_type, language="en",
+        download_root=model_dir
+    )
+    logger.info("ASR model ready.")
     yield
 
 app = FastAPI(title="WhisperX Alignment Server", lifespan=lifespan)
@@ -76,9 +95,106 @@ async def verify_secret(request: Request, call_next):
         return JSONResponse(status_code=401, content={"error": "Unauthorized"})
     return await call_next(request)
 
+class TranscribeRequest(BaseModel):
+    audio_base64: str
+    audio_format: str = "mp3"
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "whisperx-alignment", "device": _device}
+    return {
+        "status": "ok",
+        "service": "whisperx-alignment",
+        "device": _device,
+        "asr_loaded": _whisper_model is not None,
+    }
+
+@app.post("/transcribe")
+async def transcribe_audio(request: TranscribeRequest):
+    """Full transcription + alignment → flat word list [{word, start_ms, end_ms}]."""
+    if not request.audio_base64:
+        raise HTTPException(400, "audio_base64 is required")
+    if request.audio_format not in ("mp3", "wav", "m4a"):
+        raise HTTPException(400, "audio_format must be mp3, wav, or m4a")
+    if _whisper_model is None:
+        raise HTTPException(503, "ASR model not loaded")
+
+    try:
+        audio_bytes = base64.b64decode(request.audio_base64)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid base64: {e}")
+
+    suffix = f".{request.audio_format}"
+    batch_size = 16 if _device == "cuda" else 1
+
+    def do_transcribe():
+        import whisperx
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+                f.write(audio_bytes)
+                tmp_path = f.name
+
+            logger.info(f"Transcribe: {len(audio_bytes)/1024:.0f} KB audio → {tmp_path}")
+
+            try:
+                audio = whisperx.load_audio(tmp_path)
+            except Exception as e:
+                return {"error": f"Audio loading failed: {e}"}
+
+            logger.info("Running ASR transcription...")
+            try:
+                asr_result = _whisper_model.transcribe(audio, batch_size=batch_size)
+            except Exception as e:
+                return {"error": f"Transcription failed: {e}"}
+
+            segments = asr_result.get("segments", [])
+            logger.info(f"ASR produced {len(segments)} segments — aligning...")
+
+            try:
+                aligned = whisperx.align(
+                    segments, _align_model, _align_metadata,
+                    audio, device=_device, return_char_alignments=False,
+                )
+            except Exception as e:
+                return {"error": f"Alignment failed: {e}"}
+
+            # Flatten all word-level timestamps into a single list
+            words = []
+            for seg in aligned.get("segments", []):
+                for w in seg.get("words", []):
+                    if "start" in w and "end" in w:
+                        words.append({
+                            "word":     w.get("word", "").strip(),
+                            "start_ms": int(w["start"] * 1000),
+                            "end_ms":   int(w["end"]   * 1000),
+                        })
+
+            logger.info(f"Transcription complete: {len(words)} aligned words")
+            return {"status": "success", "words": words}
+
+        finally:
+            if tmp_path and Path(tmp_path).exists():
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+    async def generate():
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(None, do_transcribe)
+
+        while not future.done():
+            yield b" "
+            await asyncio.sleep(1)
+
+        try:
+            result_dict = future.result()
+            yield json.dumps(result_dict).encode("utf-8")
+        except Exception as e:
+            logger.error(f"Transcribe pipeline error: {e}", exc_info=True)
+            yield json.dumps({"error": str(e)}).encode("utf-8")
+
+    return StreamingResponse(generate(), media_type="application/json")
 
 @app.post("/align")
 async def align_captions(request: AlignRequest):

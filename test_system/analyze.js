@@ -62,6 +62,11 @@ const withWords    = captions.filter(c => c.words && c.words.length > 0);
 const withoutWords = captions.filter(c => !c.words || c.words.length === 0);
 const timingChanged = captions.filter(c => c.timing_changed);
 
+// ── Metric 2b: Match quality (Option C — matchedRatio per caption) ────────────
+const matchRatios = captions.map(c => c.matched_ratio).filter(r => r != null);
+const lowQuality  = captions.filter(c => c.matched_ratio != null && c.matched_ratio < 0.6);
+const matchStats  = stats(matchRatios.map(r => Math.round(r * 100)));
+
 // ── Metric 3: Word-Boundary Adherence ────────────────────────────────────────
 // start_delta: caption.start_ms - first_word.start_ms (should be ~0)
 // end_trim:    last_word.end_ms - (caption.end_ms - 200)
@@ -146,6 +151,16 @@ console.log(`  Timing changed by WX:     ${pad(timingChanged.length, 6)}  (${pct
 console.log(`  Word-level data:          ${pad(withWords.length, 6)}  (${pct(withWords.length, captions.length)})`);
 console.log(`  Fallback (no words):      ${pad(withoutWords.length, 6)}  (${pct(withoutWords.length, captions.length)})`);
 console.log(`  WhisperX missed segs:     ${pad(missedSegs.length, 6)}${missedSegs.length ? '  indices: ' + missedSegs.join(', ') : ''}`);
+
+if (matchRatios.length > 0) {
+  console.log('\nMatch Quality  (% of caption tokens found in transcript)');
+  console.log(`  Mean: ${pad(matchStats.mean, 4)}%   Median: ${pad(matchStats.median, 4)}%   P95: ${pad(matchStats.p95, 4)}%   Min: ${pad(matchStats.max === 0 ? 0 : Math.min(...matchRatios.map(r => Math.round(r * 100))), 4)}%`);
+  if (lowQuality.length) {
+    console.log(`  Low quality (<60%) captions: ${lowQuality.map(c => `#${c.index}(${Math.round(c.matched_ratio * 100)}%)`).join(', ')}`);
+  } else {
+    console.log('  All matched captions above 60% quality ✓');
+  }
+}
 
 console.log('\nDuration Distribution');
 console.log(`  < 240ms  (Premiere fail): ${pad(dur_sub240.length, 6)}  ${dur_sub240.length ? '← INDICES: ' + dur_sub240.map(c=>c.index).join(', ') : ''}`);

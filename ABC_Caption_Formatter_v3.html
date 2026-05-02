@@ -447,7 +447,7 @@ let previewFilter           = 'all';  // 'all' | 'changed' | 'timing' | 'warn'
 let previewAudioURL         = null;   // ObjectURL for stage2Audio
 let previewAudioTimer       = null;   // setTimeout id for stopping playback at end_ms
 const API_BASE_URL       = 'https://abc-captions.onrender.com'; // Point to live Render proxy
-const API_SECRET         = 'abc-captions-2026'; // Must match Render SHARED_SECRET
+let API_SECRET           = ''; // Fetched via prompt on first use
 
 // ── UTILITIES ─────────────────────────────────────────────────────────────────
 
@@ -1192,6 +1192,13 @@ document.getElementById('btn-skip-refinement').addEventListener('click', () => {
 // Phase 1: call Gemini only, render diff view for user review
 async function refineWithAI() {
   if (!stage2Audio) return;
+  if (!API_SECRET) {
+    API_SECRET = prompt('Please enter the server Shared Secret (e.g. lalaqueen):') || '';
+    if (!API_SECRET) {
+      alert('A Shared Secret is required to connect to the server.');
+      return;
+    }
+  }
 
   document.getElementById('btn-refine').disabled = true;
   document.getElementById('stage2-progress').style.display = 'block';
@@ -1324,6 +1331,13 @@ function updateAcceptedSet() {
 // Phase 2: send accepted suggestions to WhisperX, then show preview
 async function downloadRefinedSRT() {
   if (!stage2Audio || stage2OriginalCaptions.length === 0) return;
+  if (!API_SECRET) {
+    API_SECRET = prompt('Please enter the server Shared Secret (e.g. lalaqueen):') || '';
+    if (!API_SECRET) {
+      alert('A Shared Secret is required to connect to the server.');
+      return;
+    }
+  }
 
   const btn = document.getElementById('btn-download-refined');
   btn.disabled = true;

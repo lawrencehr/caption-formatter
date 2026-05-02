@@ -66,8 +66,8 @@ if !errorlevel! neq 0 (
 REM ── 4. Install PyTorch CPU-only (skip if already installed) ──────────────────
 !PYTHON! -c "import torch" >nul 2>&1
 if !errorlevel! neq 0 (
-    echo [3/4] Installing PyTorch - CPU-only, ~200MB...
-    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu --quiet
+    echo [3/4] Installing PyTorch 2.8.0 - CPU-only...
+    pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu --quiet
     if !errorlevel! neq 0 (
         echo ERROR: PyTorch install failed. Check your internet connection.
         pause & exit /b 1
@@ -81,6 +81,14 @@ echo [4/4] Installing/updating other dependencies...
 pip install -r requirements.txt --quiet
 if !errorlevel! neq 0 (
     echo ERROR: Dependency install failed.
+    pause & exit /b 1
+)
+
+echo [5/5] Patching ctranslate2 for Windows AVX compatibility...
+pip install ctranslate2==3.24.0 --quiet
+pip uninstall -y torchcodec --quiet
+if !errorlevel! neq 0 (
+    echo ERROR: ctranslate2 downgrade failed.
     pause & exit /b 1
 )
 echo Dependencies OK.

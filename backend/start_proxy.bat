@@ -8,7 +8,6 @@ echo ===========================================
 echo.
 
 set PORT=3000
-set SHARED_SECRET=abc-captions-2026
 set WHISPERX_URL=http://localhost:8765
 
 :: Note: Anthropic key is only used for the /api/review endpoint.
@@ -17,6 +16,10 @@ set ANTHROPIC_API_KEY=
 
 echo Please paste your Gemini API Key (begins with AIza...):
 set /p GEMINI_API_KEY=
+echo.
+
+echo Please enter the Shared Secret (must match whisperx-server):
+set /p SHARED_SECRET=
 echo.
 
 echo Starting proxy server...
