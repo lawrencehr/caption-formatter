@@ -166,7 +166,7 @@ You will receive audio and a list of captions that have been auto-formatted from
 Your job: review the captions against what is actually said in the audio, and suggest improvements where caption breaks fall in awkward places.
 
 QUALITY THRESHOLD:
-Suggest changes where they improve readability or fix caption breaks that feel awkward against the audio — a break mid-phrase, a name split, a thought that should stay together, or a boundary that doesn't match where the speaker naturally pauses. You don't need to change every caption, but don't hold back on genuine improvements. Avoid purely cosmetic changes where the current version already reads clearly.
+Suggest changes only where a caption break is clearly awkward — a hard cut mid-phrase, a name split across captions, a short caption that genuinely disrupts flow, or a boundary that lands in the wrong place relative to how the speaker pauses. The bar should be high: leave a caption alone if it reads naturally as a standalone phrase, even if a slightly different arrangement might be marginally better. A marginally better phrasing is not enough. Aim for targeted fixes, not an editorial pass.
 
 THE GOLDEN RULE: ZERO TEXT LOSS
 You MUST NOT edit, rephrase, or omit any words from the original captions. Your only task is to move the boundaries (the breaks) between captions. Every word in the input must appear exactly once in your output. No words can be added, and NO words can be deleted unless the entire caption is being merged into another.
@@ -219,7 +219,7 @@ For a split: set new_text to the first half and split_remainder to the second ha
 LINE LENGTH RULE:
 Each caption is displayed on up to 2 lines, max 30 characters per line (60 total for normal captions).
 Captions with a speaker name tag (e.g. "JOHN SMITH:") always use the first line for the name tag, leaving only the second line for spoken text.
-- For these, you MUST fit the spoken text within the provided effective_max_chars (which is 60 minus the name tag length).
+- For these, you MUST fit the spoken text within the provided effective_max_chars (always 30 — only line 2 is available for spoken text).
 - If a caption is flagged with line_too_long: true, you MUST fix the overflow.
 - If you cannot move words to a neighbor (because of name tags or italic boundaries), you MUST SPLIT the caption using change_type "split" with new_text as the first half and split_remainder as the second half.
 - NO suggested caption should ever exceed 60 characters total.
@@ -238,12 +238,15 @@ ${JSON.stringify(captions.map(c => {
     const wordCount = cleanTextForShortCheck ? cleanTextForShortCheck.split(/\s+/).length : 0;
     const isShort = wordCount > 0 && wordCount <= 3 && !nameTagMatch;
 
-    // Check if any spoken line (skip name tag line) exceeds 30 chars
-    const spokenLines = nameTagMatch ? lines.slice(1) : lines;
-    const lineTooLong = spokenLines.some(l => l.trim().length > 30);
-    
+    // text arrives as a flat string (lines joined with spaces — no \n).
+    // For name tag captions: line 1 is the tag, line 2 is the spoken text (max 30 chars).
+    // For normal captions: two lines of 30 chars = 60 chars total.
+    const nameTagM = (c.text || '').match(/^([A-Z][A-Z\s.\-']{1,40}:)\s*/);
+    const spokenText = nameTagM ? c.text.slice(nameTagM[0].length).trim() : (c.text || '').trim();
+    const lineTooLong = nameTagM ? spokenText.length > 30 : spokenText.length > 60;
+    const effectiveMax = nameTagM ? 30 : 60;
+
     const realTimingFlag = c.timingFlag && c.timingFlag.startsWith('Timing needs') ? c.timingFlag : null;
-    const effectiveMax = nameTagMatch ? Math.max(10, 60 - lines[0].length) : 60;
     const entry = {
       index: c.index,
       text: c.text,
@@ -265,7 +268,7 @@ ${JSON.stringify(captions.map(c => {
             { text: geminiPrompt }
           ]
         }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 65536 },
+        generationConfig: { temperature: 0.1, maxOutputTokens: 12000 },
         safetySettings: [
           { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
           { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
