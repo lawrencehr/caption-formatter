@@ -1724,7 +1724,7 @@ function downloadFinalSRT() {
   link.href = URL.createObjectURL(new Blob([srtContent], { type: 'text/plain' }));
   link.download = srtFileName.replace(/\.srt$/i, '_refined.srt');
   link.click();
-  showEasterEgg();
+  setTimeout(showEasterEgg, 400);
 }
 
 function downloadGeminiOnlySRT() {
@@ -1734,7 +1734,7 @@ function downloadGeminiOnlySRT() {
   link.href = URL.createObjectURL(new Blob([srtContent], { type: 'text/plain' }));
   link.download = srtFileName.replace(/\.srt$/i, '_refined_no_timing.srt');
   link.click();
-  showEasterEgg();
+  setTimeout(showEasterEgg, 400);
 }
 
 function showStage2Error(msg) {
