@@ -256,13 +256,13 @@ ${JSON.stringify(captions.map(c => {
       index: c.index,
       text: c.text,
       italic: c.italic,
-      chars: spokenText.length,
-      max_chars: effectiveMax,
       ...(realTimingFlag ? { timing_flag: realTimingFlag } : {}),
       ...(isShort ? { is_short: true } : {}),
     };
     if (lineTooLong) {
       entry.line_too_long = true;
+      entry.chars = spokenText.length;
+      entry.max_chars = effectiveMax;
     }
     return entry;
 }), null, 2)}`;
