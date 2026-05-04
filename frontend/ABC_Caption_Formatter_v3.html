@@ -1719,21 +1719,29 @@ function renderFinalPreview(captions) {
 
 function downloadFinalSRT() {
   if (!stage2FinalCaptions) return;
-  const srtContent = writeSRT(stage2FinalCaptions);
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([srtContent], { type: 'text/plain' }));
-  link.download = srtFileName.replace(/\.srt$/i, '_refined.srt');
-  link.click();
+  try {
+    const srtContent = writeSRT(stage2FinalCaptions);
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([srtContent], { type: 'text/plain' }));
+    link.download = srtFileName.replace(/\.srt$/i, '_refined.srt');
+    link.click();
+  } catch (e) {
+    console.error('[downloadFinalSRT] error:', e);
+  }
   setTimeout(showEasterEgg, 400);
 }
 
 function downloadGeminiOnlySRT() {
   if (!stage2GeminiOnlyCaptions) return;
-  const srtContent = writeSRT(stage2GeminiOnlyCaptions);
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([srtContent], { type: 'text/plain' }));
-  link.download = srtFileName.replace(/\.srt$/i, '_refined_no_timing.srt');
-  link.click();
+  try {
+    const srtContent = writeSRT(stage2GeminiOnlyCaptions);
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([srtContent], { type: 'text/plain' }));
+    link.download = srtFileName.replace(/\.srt$/i, '_refined_no_timing.srt');
+    link.click();
+  } catch (e) {
+    console.error('[downloadGeminiOnlySRT] error:', e);
+  }
   setTimeout(showEasterEgg, 400);
 }
 
@@ -1803,6 +1811,7 @@ let eeCurrent = 0;
 function initEasterEgg() {
   const wrap = document.getElementById('ee-frame-wrap');
   if (!wrap) return;
+  if (wrap.querySelectorAll('.ee-photo').length > 0) return; // already initialised
   EE_PHOTOS.forEach((src, i) => {
     const img = document.createElement('img');
     img.className = 'ee-photo' + (i === 0 ? ' active' : '');
@@ -1815,17 +1824,22 @@ function initEasterEgg() {
 function showEasterEgg() {
   const el = document.getElementById('easter-egg');
   if (!el) return;
+  // Clear any stale intervals from a previous showing
+  clearInterval(eeInterval);
+  clearInterval(eeHeartInterval);
   initEasterEgg();
   el.classList.add('show');
 
   // Cycle through photos
   const photos = el.querySelectorAll('.ee-photo');
   eeCurrent = 0;
-  eeInterval = setInterval(() => {
-    photos[eeCurrent].classList.remove('active');
-    eeCurrent = (eeCurrent + 1) % photos.length;
-    photos[eeCurrent].classList.add('active');
-  }, 480);
+  if (photos.length > 0) {
+    eeInterval = setInterval(() => {
+      photos[eeCurrent].classList.remove('active');
+      eeCurrent = (eeCurrent + 1) % photos.length;
+      photos[eeCurrent].classList.add('active');
+    }, 480);
+  }
 
   // Float hearts
   launchHearts();

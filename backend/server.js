@@ -172,7 +172,7 @@ THE GOLDEN RULE: ZERO TEXT LOSS
 You MUST NOT edit, rephrase, or omit any words from the original captions. Your only task is to move the boundaries (the breaks) between captions. Every word in the input must appear exactly once in your output. No words can be added, and NO words can be deleted unless the entire caption is being merged into another.
 
 PRIORITISE:
-- Captions with a timing_flag field — their text has been moved by the Stage 1 formatter so boundaries are known to be wrong. Suggest the boundary placement that best fits the audio even if the text looks readable as-is.
+- Captions with a timing_flag field — their text has been moved by the Stage 1 formatter so boundaries are known to be wrong. If you want to move words between this caption and a neighbour to better fit the audio, return a suggestion. If the text already reads naturally and you are not moving any words, return NO suggestion — timing for flagged captions is updated automatically, so a "timing only" suggestion is unnecessary and will be discarded.
 - Short captions (e.g. 1-3 words, flagged with is_short) — merge these with neighbors to improve flow unless they are name tags, or consist of a single emphatic word with an unmistakable audio pause both before and after.
 - Captions where a person's name is split across two captions
 - Caption breaks that fall mid-phrase or mid-thought when the audio has a natural pause elsewhere
@@ -224,7 +224,7 @@ Captions with a speaker name tag (e.g. "JOHN SMITH:") always use the first line 
 - For these, you MUST fit the spoken text within the provided effective_max_chars (always 30 — only line 2 is available for spoken text).
 - If a caption is flagged with line_too_long: true, you MUST fix the overflow.
 - If you cannot move words to a neighbor (because of name tags or italic boundaries), you MUST SPLIT the caption using change_type "split" with new_text as the first half and split_remainder as the second half.
-- NO suggested caption should ever exceed 60 characters total.
+- HARD LIMIT: new_text MUST NOT exceed 60 characters. split_remainder MUST NOT exceed 60 characters. If you cannot achieve this without violating the no-text-loss rule or the name tag / italic boundary rules, return NO suggestion for that caption — do not return an oversized suggestion.
 Write new_text as a flat string with NO line breaks — the formatter will split it automatically.
 
 INPUT CAPTIONS:

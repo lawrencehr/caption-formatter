@@ -18,8 +18,8 @@ A FastAPI server that provides word-level timestamp alignment for audio and capt
    copy .env.example .env
    # Edit .env with your text editor and add the same SHARED_SECRET from your Render proxy
    
-   # Start the server
-   start.bat
+   # Start the server (options: start.bat, start_medium.bat, start_large.bat)
+   start_medium.bat
    ```
 
 3. **Verify it's running:**
@@ -56,7 +56,9 @@ copy .env.example .env
 ### Step 3: Start the Server
 
 **Option A: Simple (recommended)**
-- Double-click `start.bat`
+- Double-click `start.bat` (Default model: small)
+- Or double-click `start_medium.bat` (Medium model)
+- Or double-click `start_large.bat` (Large-v3 model)
 - Server starts on `http://localhost:8765`
 - Stay logged in to keep it running
 
