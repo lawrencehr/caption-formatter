@@ -165,6 +165,9 @@ You will receive audio and a list of captions that have been auto-formatted from
 
 Your job: review the captions against what is actually said in the audio, and suggest improvements where caption breaks fall in awkward places.
 
+HARD CHARACTER LIMIT:
+Every caption entry in the input has a chars field (current spoken-text length) and a max_chars field (the limit that applies — 60 for normal captions, 30 for name-tag captions where only the second line is available for spoken text). Before finalising any suggestion, verify new_text does not exceed max_chars. If it does, try a different redistribution or split — never return a suggestion whose new_text or split_remainder exceeds 60 characters. If no valid fix exists within the limit, return NO suggestion for that caption. Returning oversized text is never acceptable.
+
 QUALITY THRESHOLD:
 Suggest changes only where a caption break is clearly awkward — a hard cut mid-phrase, a name split across captions, a short caption that genuinely disrupts flow, or a boundary that lands in the wrong place relative to how the speaker pauses. The bar should be high: leave a caption alone if it reads naturally as a standalone phrase, even if a slightly different arrangement might be marginally better. A marginally better phrasing is not enough. Aim for targeted fixes, not an editorial pass.
 
@@ -210,7 +213,7 @@ OUTPUT FORMAT:
 Return ONLY a JSON array. No preamble. No markdown. If no changes needed, return [].
 For each change, specify:
 - caption_index: the 1-based index from the input
-- new_text: the suggested replacement text (or "" if deleted)
+- new_text: the suggested replacement text (or "" if deleted) — MUST NOT exceed 60 characters
 - change_type: "phrase_break" | "name_kept_together" | "split" | "merge" | "delete"
 - reason: 1-sentence explanation
 - split_remainder: (splits only) the second half of the text — the formatter inserts this as a new caption immediately after
@@ -253,12 +256,13 @@ ${JSON.stringify(captions.map(c => {
       index: c.index,
       text: c.text,
       italic: c.italic,
+      chars: spokenText.length,
+      max_chars: effectiveMax,
       ...(realTimingFlag ? { timing_flag: realTimingFlag } : {}),
       ...(isShort ? { is_short: true } : {}),
     };
     if (lineTooLong) {
       entry.line_too_long = true;
-      entry.effective_max_chars = effectiveMax;
     }
     return entry;
 }), null, 2)}`;
