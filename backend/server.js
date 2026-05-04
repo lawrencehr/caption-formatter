@@ -618,8 +618,6 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
       timing_source:        assigned ? 'whisperx' : 'stage1',
       timing_update_failed: timingUpdateFailed.has(cap.index),
       partial:              isPartial,
-      words:                assigned ? assigned.words        : null,
-      matched_ratio:        assigned ? assigned.matchedRatio : null,
       ...(splitRemainder ? { _splitRemainder: splitRemainder } : {}),
     };
   });
