@@ -485,7 +485,7 @@ ${JSON.stringify(captions.map(c => {
         if (!match) continue;
         const { type, capIndex } = matchingMeta[i];
         const timing = {
-          startMs:      Math.max(0, match.startMs - 100),
+          startMs:      Math.max(0, match.startMs - 150),
           endMs:        match.endMs + 200,
           words:        match.words,
           matchedRatio: match.matchedRatio,
