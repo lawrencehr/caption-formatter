@@ -1839,7 +1839,9 @@ function closeEasterEgg() {
   clearInterval(eeHeartInterval);
   // Clear injected photos so they re-init fresh next time
   const wrap = document.getElementById('ee-frame-wrap');
-  if (wrap) wrap.innerHTML = '';
+  if (wrap) {
+    wrap.querySelectorAll('.ee-photo').forEach(img => img.remove());
+  }
 }
 
 function launchHearts() {
