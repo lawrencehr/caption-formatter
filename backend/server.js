@@ -215,6 +215,7 @@ For each change, specify:
 - split_remainder: (splits only) the second half of the text — the formatter inserts this as a new caption immediately after
 
 For a split: set new_text to the first half and split_remainder to the second half. Return ONE entry only — do not also create a separate entry for the following caption.
+SPLIT + ABSORB: if your split's new_text and split_remainder together contain all the words of an adjacent caption (i.e. you moved its text into the split to get enough characters), you MUST return a separate entry for that absorbed caption with new_text: "" and change_type: "delete". Failing to do so leaves a duplicate caption in the output.
 
 LINE LENGTH RULE:
 Each caption is displayed on up to 2 lines, max 30 characters per line (60 total for normal captions).
@@ -620,7 +621,10 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
   const dedupFlags = new Array(surviving.length).fill(false);
   for (let i = 0; i < surviving.length; i++) {
     if (!surviving[i].changed || dedupFlags[i]) continue;
-    const changedNorm = normalizeForCompare(surviving[i].text);
+    // For splits, include split_remainder so we detect when new_text+remainder
+    // together absorb a neighbouring caption that Gemini forgot to delete.
+    const splitRemNorm = surviving[i]._splitRemainder ? ' ' + normalizeForCompare(surviving[i]._splitRemainder) : '';
+    const changedNorm = normalizeForCompare(surviving[i].text) + splitRemNorm;
     if (changedNorm.length < 4) continue;
     for (let j = i + 1; j <= Math.min(i + DEDUP_WINDOW, surviving.length - 1); j++) {
       if (surviving[j].changed || dedupFlags[j]) continue;
@@ -692,6 +696,13 @@ function _mergeCaptionSuggestions(originalCaptions, suggestions, isPartial, assi
         }
       } else {
         prev.end_ms = Math.max(prev.start_ms + MIN_DURATION_MS, curr.start_ms);
+        // If prev couldn't shrink far enough, push curr forward rather than leaving an overlap.
+        if (prev.end_ms > curr.start_ms) {
+          curr.start_ms = prev.end_ms;
+          if (curr.end_ms < curr.start_ms + MIN_DURATION_MS) {
+            curr.end_ms = curr.start_ms + MIN_DURATION_MS;
+          }
+        }
       }
     }
   }
