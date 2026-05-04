@@ -448,6 +448,7 @@ ${JSON.stringify(captions.map(c => {
 
     // Match all captions to transcript via sequence alignment
     const assignedTiming = new Map();
+    const splitRemainderTiming = new Map();
     let matchResults = [];
 
     if (whisperxResult && Array.isArray(whisperxResult.words)) {
@@ -478,7 +479,6 @@ ${JSON.stringify(captions.map(c => {
       console.log(`[/api/refine] Matching ${captions.length} captions (+${remainderCount} split remainders) to ${whisperWords.length} transcript words...`);
       matchResults = matchCaptionsToTranscript(captionsForMatching, whisperWords);
 
-      const splitRemainderTiming = new Map();
       let matchedCount = 0;
       for (let i = 0; i < matchingMeta.length; i++) {
         const match = matchResults[i];
