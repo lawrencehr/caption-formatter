@@ -217,6 +217,15 @@ For each change, specify:
 - change_type: "phrase_break" | "name_kept_together" | "split" | "merge" | "delete"
 - reason: 1-sentence explanation
 - split_remainder: (splits only) the second half of the text — the formatter inserts this as a new caption immediately after
+- linked_suggestions: REQUIRED. An array of OTHER caption_index values whose suggestions depend on this one being applied. If applying this change without the others would corrupt the output (duplicate words, lose words, orphaned deletes), list them here. Use [] if this suggestion stands alone and can be accepted/rejected independently of every other suggestion.
+
+LINKED SUGGESTIONS RULE (CRITICAL):
+Whenever you move words between captions, the affected captions form a "chain" — every suggestion in that chain MUST list ALL the other captions in the chain in its linked_suggestions field. Examples:
+- Phrase_break moving words from caption 5 → 6: suggestion 5 has linked_suggestions: [6], suggestion 6 has linked_suggestions: [5].
+- Merge absorbing caption 6 into caption 5 (so 6 becomes delete): suggestion 5 has linked_suggestions: [6], suggestion 6 has linked_suggestions: [5].
+- Chain through 3 captions (4 donates to 5, 5 donates to 6): all three suggestions have linked_suggestions listing the other two — suggestion 4: [5, 6], suggestion 5: [4, 6], suggestion 6: [4, 5].
+- Standalone split of caption 7 with no neighbour involvement: suggestion 7 has linked_suggestions: [].
+Listing links symmetrically is mandatory — if A links to B, B MUST link back to A. Missing links will cause the system to apply broken partial changes.
 
 For a split: set new_text to the first half and split_remainder to the second half. Return ONE entry only — do not also create a separate entry for the following caption.
 SPLIT + ABSORB: if your split's new_text and split_remainder together contain all the words of an adjacent caption (i.e. you moved its text into the split to get enough characters), you MUST return a separate entry for that absorbed caption with new_text: "" and change_type: "delete". Failing to do so leaves a duplicate caption in the output.
@@ -353,6 +362,54 @@ ${JSON.stringify(captions.map(c => {
       } catch (e) {
         console.warn(`Could not parse Gemini suggestions: ${e.message}`);
         suggestions = [];
+      }
+
+      // Filter out suggestions whose new_text or split_remainder exceeds the line limit.
+      // When an oversized suggestion is dropped, also drop every other suggestion it
+      // declared as linked (via the linked_suggestions field) — these depend on the
+      // dropped change being applied (e.g. a paired delete for a merge, or the other
+      // half of a phrase_break redistribution).
+      const NAME_TAG_RE_FILTER = /^([A-Z][A-Z\s.\-']{1,40}:)\s*/;
+      const captionsMapForFilter = new Map(captions.map(c => [c.index, c]));
+
+      const _isOversized = s => {
+        const newText = (s.new_text || '').trim();
+        if (!newText) return false;
+        const origCap = captionsMapForFilter.get(s.caption_index);
+        const nameTagM = origCap ? (origCap.text || '').match(NAME_TAG_RE_FILTER) : null;
+        const effectiveMax = nameTagM ? 30 : 60;
+        const nameTagInNew = nameTagM ? newText.match(NAME_TAG_RE_FILTER) : null;
+        const spokenText = nameTagInNew ? newText.slice(nameTagInNew[0].length).trim() : newText;
+        if (spokenText.length > effectiveMax) return true;
+        if (s.change_type === 'split' && s.split_remainder?.trim().length > 60) return true;
+        return false;
+      };
+
+      // Seed with directly oversized suggestions, then close over Gemini-declared links.
+      const badIndices = new Set(suggestions.filter(_isOversized).map(s => s.caption_index));
+      const suggByIdx = new Map(suggestions.map(s => [s.caption_index, s]));
+
+      let chainChanged = true;
+      while (chainChanged) {
+        chainChanged = false;
+        for (const s of suggestions) {
+          if (!Array.isArray(s.linked_suggestions)) continue;
+          const linkSet = new Set([s.caption_index, ...s.linked_suggestions]);
+          const anyBad = [...linkSet].some(i => badIndices.has(i));
+          if (!anyBad) continue;
+          for (const i of linkSet) {
+            if (suggByIdx.has(i) && !badIndices.has(i)) {
+              badIndices.add(i);
+              chainChanged = true;
+            }
+          }
+        }
+      }
+
+      const preFilterCount = suggestions.length;
+      suggestions = suggestions.filter(s => !badIndices.has(s.caption_index));
+      if (suggestions.length < preFilterCount) {
+        console.log(`[/api/refine] Filtered ${preFilterCount - suggestions.length} suggestion(s) due to oversized lines + linked chains (${suggestions.length} remain; affected indices: ${[...badIndices].sort((a, b) => a - b).join(', ')})`);
       }
 
       stages.gemini = { duration_ms: Date.now() - geminiStartTime, suggestions_count: suggestions.length };
