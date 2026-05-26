@@ -37,6 +37,30 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Gemini per-model generationConfig ────────────────────────────────────────
+// Gemini 3.x: temperature / top_p / top_k are no longer recommended; the
+// model picks them internally. Use thinkingLevel (string) instead of the
+// old thinkingBudget (number).  See:
+//   https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.5
+// For 2.x models, the old temperature + thinkingBudget shape still works.
+function geminiConfigFor(model) {
+  const isV3 = model.startsWith('gemini-3');
+  if (isV3) {
+    return {
+      // 'low' = fast structured output, fewer reasoning steps — fits caption
+      // refinement (deterministic remix, not deep reasoning). Bump to 'medium'
+      // if quality drops on tricky episodes.
+      thinkingConfig: { thinkingLevel: 'low' },
+      maxOutputTokens: 65536,
+    };
+  }
+  // 2.x fallback shape
+  const cfg = { temperature: 0.1, maxOutputTokens: 65536 };
+  // 2.5 supports thinking; 0 budget disables it for speed. 2.0 ignores it.
+  cfg.thinkingConfig = { thinkingBudget: 0 };
+  return cfg;
+}
+
 // ── Claude: style guide review ────────────────────────────────────────────────
 app.post('/api/review', async (req, res) => {
   try {
@@ -87,7 +111,9 @@ No preamble. No markdown. Raw JSON array only.`;
           { text: prompt }
         ]
       }],
-      generationConfig: { temperature: 0.1 }
+      // Gemini 3.x: temperature/top_p/top_k are no longer recommended; use
+      // thinkingLevel instead. "low" keeps it fast for this structured task.
+      generationConfig: geminiConfigFor('gemini-3.5-flash')
     };
 
     const response = await fetch(
@@ -276,14 +302,13 @@ ${JSON.stringify(captions.map(c => {
     return entry;
 }), null, 2)}`;
 
-      const geminiBody = {
+      const geminiBodyBase = {
         contents: [{
           parts: [
             { inline_data: { mime_type: audioFormat === 'mp3' ? 'audio/mpeg' : `audio/${audioFormat}`, data: audioBase64 } },
             { text: geminiPrompt }
           ]
         }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 65536, thinkingConfig: { thinkingBudget: 0 } },
         safetySettings: [
           { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
           { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -294,6 +319,7 @@ ${JSON.stringify(captions.map(c => {
 
       // Try models in order, falling back on 503/UNAVAILABLE.
       // gemini-3.5-flash is the new stable flagship (announced at I/O 2026).
+      // generationConfig is built per-model — 3.x uses thinkingLevel, 2.x uses temperature.
       const geminiModels = ['gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.0-flash'];
       let geminiResponse, geminiData;
       for (let attempt = 0; attempt < geminiModels.length; attempt++) {
@@ -301,6 +327,7 @@ ${JSON.stringify(captions.map(c => {
         if (attempt > 0) {
           console.log(`[/api/refine] Gemini falling back to ${model}...`);
         }
+        const geminiBody = { ...geminiBodyBase, generationConfig: geminiConfigFor(model) };
         geminiResponse = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(geminiBody) }
