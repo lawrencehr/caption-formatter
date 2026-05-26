@@ -69,7 +69,7 @@ Render Proxy  backend/server.js
 - Phase 1 (`POST /api/refine` without `accepted_suggestions`): Gemini analyses audio + captions, returns JSON array of suggested boundary changes. Browser shows diff view.
 - Phase 2 (`POST /api/refine` with `accepted_suggestions`): WhisperX force-aligns accepted suggestion text to audio, returns millisecond timestamps. Browser shows final preview.
 
-**Gemini model fallback:** tries `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.0-flash` in order, retrying on `UNAVAILABLE` or `RESOURCE_EXHAUSTED`.
+**Gemini model fallback:** tries `gemini-3.5-flash` → `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.0-flash` in order, retrying on `UNAVAILABLE` or `RESOURCE_EXHAUSTED`.
 
 **Keep-alive:** backend writes space bytes every 10s during long API calls to prevent Render's 100s idle timeout from cutting the connection.
 

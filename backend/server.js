@@ -91,7 +91,7 @@ No preamble. No markdown. Raw JSON array only.`;
     };
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -292,8 +292,9 @@ ${JSON.stringify(captions.map(c => {
         ]
       };
 
-      // Try models in order, falling back on 503/UNAVAILABLE
-      const geminiModels = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+      // Try models in order, falling back on 503/UNAVAILABLE.
+      // gemini-3.5-flash is the new stable flagship (announced at I/O 2026).
+      const geminiModels = ['gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.0-flash'];
       let geminiResponse, geminiData;
       for (let attempt = 0; attempt < geminiModels.length; attempt++) {
         const model = geminiModels[attempt];
