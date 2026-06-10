@@ -1,0 +1,13 @@
+{
+  "name": "gemini-eval",
+  "version": "1.0.0",
+  "description": "Offline evaluation harness for the Stage 2 Phase 1 Gemini pipeline",
+  "private": true,
+  "scripts": {
+    "run": "node run_eval.js",
+    "evaluate": "node evaluate.js"
+  },
+  "dependencies": {
+    "mammoth": "^1.8.0"
+  }
+}
