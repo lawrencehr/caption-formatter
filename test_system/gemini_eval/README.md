@@ -30,16 +30,24 @@ repeatedly and scored against the caption standards.
 
   Plus run-to-run consistency (Jaccard overlap of suggested caption indices) per episode.
 
+- `final_pass.js` — replays each saved run through the rest of the production
+  pipeline (server `mergeCaptionSuggestions` + chain validation + the frontend's
+  `splitLines`/italic mapping) with accept-all, and validates the FINAL SRT:
+  line lengths, italic provenance, timing sanity, exact-token conservation.
+  Reports issues net of a zero-suggestions baseline.
+
 ## Usage
 
 ```powershell
 cd test_system\gemini_eval
 npm install                          # first time only (mammoth)
 $env:GEMINI_API_KEY = "AIza..."
-node run_eval.js                     # all episodes × 2 runs each
+node run_eval.js                     # all episodes × 2 runs, production config (medium, no audio)
 node run_eval.js ep11 ep14           # subset
 node run_eval.js --runs 3            # more repeats
-node evaluate.js                     # score + write results/report.md
+node run_eval.js --thinking low --audio   # A/B arms
+node evaluate.js                     # score raw Gemini output → results/report.md
+node final_pass.js                   # validate the final SRT after the full pipeline
 ```
 
 `Test files/` is auto-discovered by walking up from this directory (works from git

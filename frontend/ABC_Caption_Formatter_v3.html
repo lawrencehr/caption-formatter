@@ -5370,10 +5370,14 @@ async function downloadRefinedSRT() {
       const origResult = result.find((r, i) => (r.index || i + 1) === c.index) || {};
       const text = c.text || '';
       // Unchanged captions: trust Stage 1's italic flag (computed with full paragraph context).
-      // Changed captions: re-derive from boldSegments since text may have shifted boundaries.
+      // Changed captions: use the Stage-1 flag carried through the API (c.italic) —
+      // the server's chain validation guarantees text never crosses italic boundaries,
+      // so the source caption's flag is correct. Re-deriving from boldSegments fails
+      // on short redistributed fragments (e.g. a split remainder of a quote), which
+      // silently un-italicised them. deriveItalic remains as a last-resort fallback.
       const italic = (!c.changed && origResult.italic !== undefined)
         ? origResult.italic
-        : deriveItalic(text);
+        : (typeof c.italic === 'boolean' ? c.italic : deriveItalic(text));
       const lines = splitLines(text);
       const timingChanged = withTimingDiff && !c.changed &&
         (Math.abs((c.start_ms || 0) - (origResult.start || 0)) > 50 ||
