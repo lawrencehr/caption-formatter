@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-ABC Caption Formatter v3 — a 3-component caption refinement tool for ABC Media Watch social media videos. Stage 1 (browser-only) formats raw Premiere SRT exports using a Google Doc transcript for italic detection. Stage 2 (requires backend) uses Gemini to suggest better phrase breaks, then WhisperX to force-align the refined text to audio for accurate millisecond timestamps.
+ABC Caption Formatter v3 "Sunrise" — a caption refinement tool for ABC Media Watch social media videos. Stage 1 (browser-only) formats raw Premiere SRT exports using a Google Doc transcript for italic detection. Stage 2 (requires backend) uses Gemini to suggest better phrase breaks, then WhisperX to force-align the refined text to audio for accurate millisecond timestamps.
 
 ## Components and how to run them
 
-**Frontend** — no build step. Open `frontend/ABC_Caption_Formatter_v3.html` directly in a browser. Stage 1 runs entirely in-browser. Stage 2 requires the backend to be running and reachable.
+**Frontend** — no build step. Open `frontend/ABC_Caption_Formatter_v3.html` directly in a browser. Stage 1 runs entirely in-browser. Stage 2 requires the backend to be running and reachable. Backend config (API URL + Shared Secret) is stored in `localStorage` via a config modal in the UI — not in a file.
 
 **Backend proxy** (Node.js/Express, port 3000):
 ```
@@ -26,7 +26,7 @@ start.bat                # creates venv, installs deps, starts on :8765
 ```
 First startup downloads the wav2vec2 alignment model (~370MB). Torch/torchaudio are installed separately in `start.bat` (CPU-only build) to avoid the 2GB CUDA download.
 
-Health check: `curl http://localhost:8765/health` → `{"status":"ok","service":"whisperx-alignment"}`
+Health check: `curl http://localhost:8765/health` → `{"status":"ok","service":"whisperx-alignment","device":"cpu","asr_loaded":true}`
 
 **Cloudflare Tunnel** (exposes local WhisperX to Render):
 ```
@@ -44,34 +44,52 @@ Configure `PROXY_URL`, `WHISPERX_URL`, `SHARED_SECRET`, and file paths at the to
 
 | Variable | Description |
 |---|---|
-| `SHARED_SECRET` | Auth token — must match `whisperx-server/.env` and `frontend/config.js` |
+| `SHARED_SECRET` | Auth token — must match `whisperx-server/.env` and the frontend config modal |
 | `GEMINI_API_KEY` | Google Gemini API key |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API key (used by `/api/review` only) |
 | `WHISPERX_URL` | Public Cloudflare Tunnel URL, e.g. `https://whisperx-abc.trycloudflare.com` |
 | `PORT` | Optional, defaults to 3000 |
+| `WHISPER_MODEL` | WhisperX model name, e.g. `medium` or `large-v3` (set in `whisperx-server/.env`) |
 
 For local dev, set `WHISPERX_URL=http://localhost:8765`.
 
 ## Architecture
 
 ```
-Browser (HTML/JS)
+Browser (HTML/JS, ~7,600 lines)
   │  multipart upload (audio + captions JSON + X-Secret)
   ▼
 Render Proxy  backend/server.js
-  ├─► Gemini Flash API  (Phase 1: caption text suggestions)
-  └─► WhisperX via Cloudflare Tunnel  (Phase 2: word-level forced alignment)
-         │
-         └─ whisperx-server/server.py  (FastAPI, runs on local Windows machine)
+  ├─► POST /api/review       — proxies to Anthropic Claude API
+  ├─► POST /api/audio-check  — proxies to Gemini Flash for transcript verification
+  └─► POST /api/refine       — main Stage 2 pipeline (2-phase)
+      ├─ Phase 1: Gemini analyses audio + captions → JSON array of suggestions
+      └─ Phase 2: WhisperX force-aligns accepted text → millisecond timestamps
+               │
+               └─ whisperx-server/server.py  (FastAPI, runs on local Windows machine)
+                  ├─ POST /transcribe  — full audio ASR + alignment → flat word list
+                  └─ POST /align       — force-align captions to audio segment
 ```
 
 **Stage 2 two-phase flow:**
 - Phase 1 (`POST /api/refine` without `accepted_suggestions`): Gemini analyses audio + captions, returns JSON array of suggested boundary changes. Browser shows diff view.
-- Phase 2 (`POST /api/refine` with `accepted_suggestions`): WhisperX force-aligns accepted suggestion text to audio, returns millisecond timestamps. Browser shows final preview.
+- Phase 2 (`POST /api/refine` with `accepted_suggestions`): Backend applies accepted suggestions, then calls WhisperX `/transcribe` (single call for full audio), uses `matcher.js` to map captions to transcript words, and returns millisecond timestamps. Browser shows Align Preview.
 
 **Gemini model fallback:** tries `gemini-3.5-flash` → `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.0-flash` in order, retrying on `UNAVAILABLE` or `RESOURCE_EXHAUSTED`.
 
 **Keep-alive:** backend writes space bytes every 10s during long API calls to prevent Render's 100s idle timeout from cutting the connection.
+
+## Frontend UI structure (Sunrise redesign)
+
+The frontend (`frontend/ABC_Caption_Formatter_v3.html`, ~7,600 lines) uses a "Broadcast Console" shell with a tab bar. CSS phases correspond to UI phases:
+
+- **Phase A** — Shell wrapper: sidebar + tab row (`.a-shell`, `.a-tab-row`, `.a-tab`)
+- **Phase B** — Review tab: caption list with timing/style inspection
+- **Phase C** — AI Suggestions tab: diff view with per-caption accept/reject checkboxes, linked suggestion handling
+- **Phase D** — Align Preview tab: word-level timing visualisation, drift metrics
+- **Phase E** — Export tab: SRT download with format options
+
+Stage 1 (format) and Stage 2 (AI refine) logic panels are wrapped inside the Phase A shell. The config modal stores `API_BASE_URL` and `API_SECRET` in `localStorage` — there is no `config.js` file.
 
 ## Key constraints
 
@@ -79,11 +97,25 @@ Render Proxy  backend/server.js
 - **Gemini must not change words** — the prompt strictly forbids it. It only moves caption boundaries.
 - **Max audio upload:** 100MB. Max JSON payload: 25MB. Pipeline timeout: 120s.
 - **Minimum caption duration:** 300ms (enforced post-WhisperX). Premiere Pro requires ≥6 frames (~240ms at 25fps) to import.
-- **Frontend config is gitignored.** `frontend/config.js` holds `API_BASE_URL` and `API_SECRET` and is never committed. `frontend/config.example.js` is the template.
+- **Frontend config lives in localStorage.** The config modal in the UI stores `API_BASE_URL` and `API_SECRET`. There is no `config.js` or `config.example.js` in use.
 - **WhisperX degrades gracefully.** If unreachable, Stage 2 still returns Gemini text improvements with original Stage 1 timing and a user-facing warning.
+- **Overlap resolution:** The overlap guard only trims `end_ms`, never moves `start_ms`. Gap-filler logic was removed (it was causing 33% start_delta failures).
 
 ## File layout (non-obvious parts)
 
-- `frontend/ABC_Caption_Formatter_v3.html` — entire frontend (~1,800 lines). Stage 1 logic: `processCaptions()`, `deriveItalic()`, `shouldBeItalic()`, `splitLines()`. Stage 2 logic: `refineWithAI()` (Phase 1), `downloadRefinedSRT()` (Phase 2), `mapApiCaption()`.
-- `backend/server.js` — single Express file (~650 lines). Gemini prompt is inline (~160 lines). Deduplication and gap/overlap resolution run post-WhisperX.
-- `whisperx-server/server.py` — FastAPI app. Model and device configured at lines 152-153 (`large-v3` / `cpu`). Change to `medium` for faster processing.
+- `frontend/ABC_Caption_Formatter_v3.html` — entire frontend (~7,600 lines). CSS Phase A–E at top (~2,800 lines). Stage 1 logic: `processCaptions()`, `deriveItalic()`, `shouldBeItalic()`, `splitLines()`. Stage 2 logic: `refineWithAI()` (Phase 1 call), `downloadRefinedSRT()` (Phase 2 call), `mapApiCaption()`, `renderDiffView()`, `aiIsSeparate()` / `aiBuildLinkGroups()` (linked suggestion handling), `aiWordDiff()`.
+- `backend/server.js` — single Express file (~828 lines). Gemini prompt is inline (~160 lines, forbids text rewriting, defines suggestion JSON schema). Per-model `generationConfig` (v3.x uses `thinkingLevel: 'low'`, v2.x uses `temperature: 0.1`).
+- `backend/lib/matcher.js` — sequence matching engine (~188 lines). `normaliseCaption()` expands currency/years/numbers to words; `matchCaptionsToTranscript()` uses forward greedy cursor with SEARCH_AHEAD=40, SLACK=8, MIN_RATIO=0.6.
+- `whisperx-server/server.py` — FastAPI app (~351 lines). Model loaded at startup via lifespan context manager. CUDA auto-detected; falls back to CPU. `WHISPER_MODEL` env var controls which ASR model loads (default: `medium`).
+- `test_system/tester.js` — E2E test runner; configure file paths and URLs at the top.
+- `test_system/analyze.js` — quality analysis: duration distribution, match ratio, start_delta, sequential integrity.
+- `test_system/test_matcher.js` — 22+ unit tests for `matcher.js`.
+- `ABC_Caption_Formatter_v2.html` — legacy reference, not in use.
+
+## Additional documentation
+
+- `DEPLOYMENT_GUIDE.md` — 5-step quick-start for deploying to Render + Cloudflare
+- `PROJECT_SUMMARY.md` — high-level overview with deployment checklist
+- `IMPLEMENTATION_NOTES.md` — technical reference for developers
+- `backend/README.md` — API endpoint documentation
+- `whisperx-server/README.md` — WhisperX setup + Cloudflare Tunnel instructions
