@@ -10,6 +10,7 @@ __pycache__/
 # Secrets — never commit these
 frontend/config.js
 **/.env
+.claude/settings.local.json
 
 # Runtime
 backend/temp/
