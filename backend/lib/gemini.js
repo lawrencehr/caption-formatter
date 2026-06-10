@@ -9,14 +9,14 @@ const GEMINI_MODELS = ['gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5
 // old thinkingBudget (number).  See:
 //   https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.5
 // For 2.x models, the old temperature + thinkingBudget shape still works.
-function geminiConfigFor(model) {
+function geminiConfigFor(model, opts = {}) {
   const isV3 = model.startsWith('gemini-3');
   if (isV3) {
     return {
       // 'low' = fast structured output, fewer reasoning steps — fits caption
       // refinement (deterministic remix, not deep reasoning). Bump to 'medium'
-      // if quality drops on tricky episodes.
-      thinkingConfig: { thinkingLevel: 'low' },
+      // if quality drops on tricky episodes. opts.thinkingLevel overrides (eval harness A/B).
+      thinkingConfig: { thinkingLevel: opts.thinkingLevel || 'low' },
       maxOutputTokens: 65536,
     };
   }
