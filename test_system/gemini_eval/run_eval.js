@@ -191,9 +191,10 @@ async function main() {
   }
 
   const args = process.argv.slice(2);
+  // Defaults mirror production (server.js): medium thinking, no audio to Gemini.
   let runs = 2;
-  let thinkingLevel = 'low';
-  let includeAudio = true;
+  let thinkingLevel = 'medium';
+  let includeAudio = false;
 
   const runsIdx = args.indexOf('--runs');
   if (runsIdx !== -1) { runs = Number(args[runsIdx + 1]) || 2; args.splice(runsIdx, 2); }
@@ -201,6 +202,8 @@ async function main() {
   if (thinkIdx !== -1) { thinkingLevel = args[thinkIdx + 1]; args.splice(thinkIdx, 2); }
   const noAudioIdx = args.indexOf('--no-audio');
   if (noAudioIdx !== -1) { includeAudio = false; args.splice(noAudioIdx, 1); }
+  const audioIdx = args.indexOf('--audio');
+  if (audioIdx !== -1) { includeAudio = true; args.splice(audioIdx, 1); }
 
   if (!['low', 'medium', 'high'].includes(thinkingLevel)) {
     console.error(`Invalid --thinking "${thinkingLevel}" (use low|medium|high)`);

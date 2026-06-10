@@ -104,6 +104,20 @@ function shouldBeItalic(text, segs) {
   return false;
 }
 
+// Re-derive italic from bold segments — used post-AI to correct flags after text
+// redistribution. Mirrors the frontend's deriveItalic (which closes over the
+// global boldSegments; here segs is a parameter).
+function deriveItalic(text, segs) {
+  if (!text || !text.trim()) return false;
+  const spk = detectSpeaker(text);
+  if (spk) {
+    const isNonHost = shouldBeItalic(spk.name, segs) || shouldBeItalic(spk.rest, segs);
+    if (isNonHost) return true;
+    return shouldBeItalic(spk.rest, segs);
+  }
+  return shouldBeItalic(text, segs);
+}
+
 // ── SRT PARSING (verbatim) ───────────────────────────────────────────────────
 
 function parseSRT(raw) {
@@ -373,7 +387,7 @@ async function runStage1(srtText, docxBuffer) {
 }
 
 module.exports = {
-  normalize, parseTime, parseTranscript, shouldBeItalic, parseSRT,
+  normalize, parseTime, parseTranscript, shouldBeItalic, deriveItalic, parseSRT,
   detectSpeaker, splitLines, detectMidSpeaker, detectLeadIn,
   preprocessMidSpeakers, detectTrailingPlain, processCaptions,
   buildApiCaptions, runStage1,

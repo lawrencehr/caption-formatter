@@ -13,10 +13,11 @@ function geminiConfigFor(model, opts = {}) {
   const isV3 = model.startsWith('gemini-3');
   if (isV3) {
     return {
-      // 'low' = fast structured output, fewer reasoning steps — fits caption
-      // refinement (deterministic remix, not deep reasoning). Bump to 'medium'
-      // if quality drops on tricky episodes. opts.thinkingLevel overrides (eval harness A/B).
-      thinkingConfig: { thinkingLevel: opts.thinkingLevel || 'low' },
+      // 'medium' — A/B tested 2026-06-10 (test_system/gemini_eval, 48 runs):
+      // low produced char-limit violations + one silent text-loss; medium had
+      // zero rule violations across 573 suggestions. Cost: ~60s vs ~31s.
+      // opts.thinkingLevel overrides (eval harness A/B).
+      thinkingConfig: { thinkingLevel: opts.thinkingLevel || 'medium' },
       maxOutputTokens: 65536,
     };
   }
@@ -238,6 +239,143 @@ function filterOversizedSuggestions(suggestions, captions) {
   };
 }
 
+// ── Chain validation ─────────────────────────────────────────────────────────
+// Deterministic guard against the failure modes Gemini can produce even when
+// each suggestion individually looks fine (measured in test_system/gemini_eval):
+//   - text loss / duplication from incomplete chains (words silently dropped)
+//   - chains that move words across italic / non-italic boundaries
+//   - dangling links (a suggestion depends on one that doesn't exist)
+//   - texts that pass the 60-char limit but cannot be split into two ≤30 lines
+// Also normalizes linked_suggestions (strips self-references, coerces to array).
+// Suggestions are grouped into chains via the symmetric closure of
+// linked_suggestions; an invalid chain is dropped whole.
+
+// Mirrors splitLines() in frontend/ABC_Caption_Formatter_v3.html — used to test
+// whether a suggested text can actually render as ≤2 lines of ≤30 chars.
+const SPLIT_BREAK_RE = /(?<!\d),(?!\s*\d)|[;:]|[—–]/g;
+function splitLinesForCheck(text) {
+  text = text.trim();
+  if (!text) return [];
+  if (text.length <= 30) return [text];
+  const candidates = [];
+  SPLIT_BREAK_RE.lastIndex = 0;
+  let m;
+  while ((m = SPLIT_BREAK_RE.exec(text)) !== null) {
+    const pos = m.index + m[0].length;
+    const ratio = pos / text.length;
+    if (ratio < 0.20 || ratio > 0.80) continue;
+    const l1 = text.slice(0, pos).trim();
+    const l2 = text.slice(pos).trim();
+    if (l1 && l2 && l1.length <= 30 && l2.length <= 30)
+      candidates.push({ l1, l2, dist: Math.abs(pos - text.length / 2) });
+  }
+  if (candidates.length) {
+    candidates.sort((a, b) => a.dist - b.dist);
+    return [candidates[0].l1, candidates[0].l2];
+  }
+  const words = text.split(/\s+/);
+  if (words.length === 1) return [text];
+  let best = null, bestDiff = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const l1 = words.slice(0, i).join(' ');
+    const l2 = words.slice(i).join(' ');
+    const diff = Math.abs(l1.length - l2.length);
+    if (diff < bestDiff) { bestDiff = diff; best = [l1, l2]; }
+  }
+  return best || [text];
+}
+
+function validateSuggestionChains(suggestions, captions) {
+  const capByIdx = new Map(captions.map(c => [c.index, c]));
+  const suggByIdx = new Map(suggestions.map(s => [s.caption_index, s]));
+  const tok = t => (t || '').split(/\s+/).filter(Boolean);
+
+  // Normalize links: array, no self-references
+  for (const s of suggestions) {
+    s.linked_suggestions = Array.isArray(s.linked_suggestions)
+      ? s.linked_suggestions.filter(i => i !== s.caption_index)
+      : [];
+  }
+
+  // Union-find over caption_index to build chains (symmetric closure of links)
+  const parent = new Map(suggestions.map(s => [s.caption_index, s.caption_index]));
+  const find = i => { let r = i; while (parent.get(r) !== r) r = parent.get(r); parent.set(i, r); return r; };
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+  for (const s of suggestions) {
+    for (const li of s.linked_suggestions) {
+      if (suggByIdx.has(li)) union(s.caption_index, li);
+    }
+  }
+  const chains = new Map(); // root → caption_index[]
+  for (const s of suggestions) {
+    const r = find(s.caption_index);
+    if (!chains.has(r)) chains.set(r, []);
+    chains.get(r).push(s.caption_index);
+  }
+
+  const droppedChains = []; // {indices, reason}
+  for (const indices of chains.values()) {
+    indices.sort((a, b) => a - b);
+    const chainSugs = indices.map(i => suggByIdx.get(i));
+    let reason = null;
+
+    // Dangling links: depends on a suggestion that doesn't exist
+    for (const s of chainSugs) {
+      const missing = s.linked_suggestions.filter(li => !suggByIdx.has(li));
+      if (missing.length) { reason = `dangling link to #${missing.join(', #')}`; break; }
+    }
+
+    // Italic uniformity: a multi-caption chain must not span italic + non-italic captions
+    if (!reason && indices.length > 1) {
+      const states = new Set(indices.map(i => !!(capByIdx.get(i) || {}).italic));
+      if (states.size > 1) reason = 'chain crosses an italic/non-italic boundary';
+    }
+
+    // Exact-token conservation across the chain (split remainders included).
+    // Catches incomplete chains: words lost or duplicated when applied together.
+    if (!reason) {
+      const origTokens = [], newTokens = [];
+      for (const i of indices) {
+        origTokens.push(...tok((capByIdx.get(i) || {}).text));
+        const s = suggByIdx.get(i);
+        const isDelete = s.change_type === 'delete' || !s.new_text || !String(s.new_text).trim();
+        if (!isDelete) newTokens.push(...tok(String(s.new_text)));
+        if (s.change_type === 'split' && s.split_remainder && String(s.split_remainder).trim()) {
+          newTokens.push(...tok(String(s.split_remainder).trim()));
+        }
+      }
+      if (origTokens.join(' ') !== newTokens.join(' ')) reason = 'text not conserved across chain (words lost, duplicated, or altered)';
+    }
+
+    // Line feasibility: every suggested text must render as ≤2 lines of ≤30 chars.
+    // (The 60-char limit alone does not guarantee this — split depends on word boundaries.)
+    if (!reason) {
+      outer:
+      for (const s of chainSugs) {
+        for (const t of [s.new_text, s.split_remainder]) {
+          if (!t || !String(t).trim()) continue;
+          // Name-tag captions render as [tag, spoken] — only the spoken text is line-split.
+          const tagM = String(t).match(NAME_TAG_RE_SPACED);
+          const renderable = tagM ? String(t).slice(tagM[0].length).trim() : String(t).trim();
+          const lines = splitLinesForCheck(renderable);
+          if (lines.length > 2 || lines.some(l => l.length > 30)) {
+            reason = `"${renderable.slice(0, 50)}..." cannot split into two ≤30-char lines`;
+            break outer;
+          }
+        }
+      }
+    }
+
+    if (reason) droppedChains.push({ indices, reason });
+  }
+
+  const badIndices = new Set(droppedChains.flatMap(d => d.indices));
+  return {
+    kept: suggestions.filter(s => !badIndices.has(s.caption_index)),
+    droppedChains,
+  };
+}
+
 module.exports = {
   GEMINI_MODELS,
   geminiConfigFor,
@@ -245,4 +383,5 @@ module.exports = {
   buildGeminiPrompt,
   parseSuggestions,
   filterOversizedSuggestions,
+  validateSuggestionChains,
 };
