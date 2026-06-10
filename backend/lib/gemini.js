@@ -33,7 +33,8 @@ const NAME_TAG_RE_SPACED = /^([A-Z][A-Z\s.\-']{1,40}:)\s*/;
 
 // Annotates raw captions with the metadata fields the prompt references
 // (is_short, line_too_long, chars, max_chars, timing_flag).
-function annotateCaptions(captions) {
+// maxChars: limit for normal (non-name-tag) captions, default 60.
+function annotateCaptions(captions, maxChars = 60) {
   return captions.map(c => {
     const lines = c.text ? c.text.split('\n') : [];
     const nameTagMatch = lines.length > 0 && NAME_TAG_RE.test(lines[0]);
@@ -50,8 +51,8 @@ function annotateCaptions(captions) {
     // For normal captions: two lines of 30 chars = 60 chars total.
     const nameTagM = (c.text || '').match(NAME_TAG_RE_SPACED);
     const spokenText = nameTagM ? c.text.slice(nameTagM[0].length).trim() : (c.text || '').trim();
-    const lineTooLong = nameTagM ? spokenText.length > 30 : spokenText.length > 60;
-    const effectiveMax = nameTagM ? 30 : 60;
+    const lineTooLong = nameTagM ? spokenText.length > 30 : spokenText.length > maxChars;
+    const effectiveMax = nameTagM ? 30 : maxChars;
 
     const realTimingFlag = c.timingFlag && c.timingFlag.startsWith('Timing needs') ? c.timingFlag : null;
     const entry = {
@@ -70,14 +71,23 @@ function annotateCaptions(captions) {
   });
 }
 
-function buildGeminiPrompt(captions) {
+// opts.maxChars: character limit for normal captions (default 60).
+// opts.lineLevel (default true): Gemini writes explicit ≤30-char lines
+// (\n-separated) instead of a flat ≤maxChars string. Line-level is production
+// default — A/B tested 2026-06-11: flat mode rendered a >30-char line for ~10%
+// of suggestions (the 60-char limit can't guarantee a clean 30/30 split);
+// line-level rendered 0% over 103 suggestions and handled name tags perfectly.
+// Pass lineLevel: false for the legacy flat prompt (eval harness comparison).
+function buildGeminiPrompt(captions, opts = {}) {
+  const maxChars = opts.maxChars || 60;
+  const lineLevel = opts.lineLevel !== false;
   return `You are an expert caption editor for ABC Media Watch social media videos.
 You will receive audio and a list of captions that have been auto-formatted from a Premiere Pro export.
 
 Your job: review the captions against what is actually said in the audio, and suggest improvements where caption breaks fall in awkward places.
 
 HARD CHARACTER LIMIT:
-Every caption entry in the input has a chars field (current spoken-text length) and a max_chars field (the limit that applies — 60 for normal captions, 30 for name-tag captions where only the second line is available for spoken text). Before finalising any suggestion, verify new_text does not exceed max_chars. If it does, try a different redistribution or split — never return a suggestion whose new_text or split_remainder exceeds 60 characters. If no valid fix exists within the limit, return NO suggestion for that caption. Returning oversized text is never acceptable.
+Every caption entry in the input has a chars field (current spoken-text length) and a max_chars field (the limit that applies — ${maxChars} for normal captions, 30 for name-tag captions where only the second line is available for spoken text). Before finalising any suggestion, verify new_text does not exceed max_chars. If it does, try a different redistribution or split — never return a suggestion whose new_text or split_remainder exceeds ${maxChars} characters. If no valid fix exists within the limit, return NO suggestion for that caption. Returning oversized text is never acceptable.
 
 QUALITY THRESHOLD:
 Suggest changes only where a caption break is clearly awkward — a hard cut mid-phrase, a name split across captions, a short caption that genuinely disrupts flow, or a boundary that lands in the wrong place relative to how the speaker pauses. The bar should be high: leave a caption alone if it reads naturally as a standalone phrase, even if a slightly different arrangement might be marginally better. A marginally better phrasing is not enough. Aim for targeted fixes, not an editorial pass.
@@ -124,7 +134,9 @@ OUTPUT FORMAT:
 Return ONLY a JSON array. No preamble. No markdown. If no changes needed, return [].
 For each change, specify:
 - caption_index: the 1-based index from the input
-- new_text: the suggested replacement text (or "" if deleted) — MUST NOT exceed 60 characters
+- new_text: ${lineLevel
+    ? 'the suggested replacement text (or "" if deleted), written as 1 or 2 lines separated by a newline character (\\n) — EACH LINE MUST NOT exceed 30 characters'
+    : `the suggested replacement text (or "" if deleted) — MUST NOT exceed ${maxChars} characters`}
 - change_type: "phrase_break" | "name_kept_together" | "split" | "merge" | "delete"
 - reason: 1-sentence explanation
 - split_remainder: (splits only) the second half of the text — the formatter inserts this as a new caption immediately after
@@ -141,17 +153,26 @@ Listing links symmetrically is mandatory — if A links to B, B MUST link back t
 For a split: set new_text to the first half and split_remainder to the second half. Return ONE entry only — do not also create a separate entry for the following caption.
 SPLIT + ABSORB: if your split's new_text and split_remainder together contain all the words of an adjacent caption (i.e. you moved its text into the split to get enough characters), you MUST return a separate entry for that absorbed caption with new_text: "" and change_type: "delete". Failing to do so leaves a duplicate caption in the output.
 
-LINE LENGTH RULE:
-Each caption is displayed on up to 2 lines, max 30 characters per line (60 total for normal captions).
+${lineLevel
+  ? `LINE LENGTH RULE (CRITICAL — YOU CHOOSE THE LINE BREAKS):
+Each caption is displayed on up to 2 lines, max 30 characters per line.
+Write new_text (and split_remainder) with an explicit newline character (\\n) between the two lines. EVERY LINE MUST BE 30 CHARACTERS OR FEWER — count the characters of each line before finalising a suggestion.
+Captions with a speaker name tag (e.g. "JOHN SMITH:") always use the first line for the name tag: write the tag alone on line 1 and the spoken text on line 2 (max 30 chars).
+- If a caption is flagged with line_too_long: true, you MUST fix the overflow.
+- If you cannot move words to a neighbor (because of name tags or italic boundaries), you MUST SPLIT the caption using change_type "split" with new_text as the first half and split_remainder as the second half.
+- HARD LIMIT: no line may exceed 30 characters. If you cannot achieve this without violating the no-text-loss rule or the name tag / italic boundary rules, return NO suggestion for that caption.
+Break lines at natural phrase points (after punctuation, before conjunctions) when possible.`
+  : `LINE LENGTH RULE:
+Each caption is displayed on up to 2 lines, max 30 characters per line (${maxChars} total for normal captions).
 Captions with a speaker name tag (e.g. "JOHN SMITH:") always use the first line for the name tag, leaving only the second line for spoken text.
 - For these, you MUST fit the spoken text within the provided effective_max_chars (always 30 — only line 2 is available for spoken text).
 - If a caption is flagged with line_too_long: true, you MUST fix the overflow.
 - If you cannot move words to a neighbor (because of name tags or italic boundaries), you MUST SPLIT the caption using change_type "split" with new_text as the first half and split_remainder as the second half.
-- HARD LIMIT: new_text MUST NOT exceed 60 characters. split_remainder MUST NOT exceed 60 characters. If you cannot achieve this without violating the no-text-loss rule or the name tag / italic boundary rules, return NO suggestion for that caption — do not return an oversized suggestion.
-Write new_text as a flat string with NO line breaks — the formatter will split it automatically.
+- HARD LIMIT: new_text MUST NOT exceed ${maxChars} characters. split_remainder MUST NOT exceed ${maxChars} characters. If you cannot achieve this without violating the no-text-loss rule or the name tag / italic boundary rules, return NO suggestion for that caption — do not return an oversized suggestion.
+Write new_text as a flat string with NO line breaks — the formatter will split it automatically.`}
 
 INPUT CAPTIONS:
-${JSON.stringify(annotateCaptions(captions), null, 2)}`;
+${JSON.stringify(annotateCaptions(captions, maxChars), null, 2)}`;
 }
 
 // Parses the Gemini response text into a suggestions array, salvaging
@@ -199,16 +220,30 @@ function parseSuggestions(responseText) {
 function filterOversizedSuggestions(suggestions, captions) {
   const captionsMapForFilter = new Map(captions.map(c => [c.index, c]));
 
-  const _isOversized = s => {
-    const newText = (s.new_text || '').trim();
-    if (!newText) return false;
-    const origCap = captionsMapForFilter.get(s.caption_index);
+  // Line-level texts (\n present): oversized when any line beyond a name tag
+  // exceeds 30 chars. Flat texts: legacy total-length check (60, or 30 spoken
+  // for name-tag captions).
+  const _textOversized = (text, origCap) => {
+    const t = (text || '').trim();
+    if (!t) return false;
+    if (t.includes('\n')) {
+      const lines = t.split('\n').map(l => l.trim()).filter(Boolean);
+      const tagFirst = NAME_TAG_RE_SPACED.test(lines[0] || '') && lines[0].trim().endsWith(':');
+      const spokenLines = tagFirst ? lines.slice(1) : lines;
+      return spokenLines.some(l => l.length > 30);
+    }
     const nameTagM = origCap ? (origCap.text || '').match(NAME_TAG_RE_SPACED) : null;
     const effectiveMax = nameTagM ? 30 : 60;
-    const nameTagInNew = nameTagM ? newText.match(NAME_TAG_RE_SPACED) : null;
-    const spokenText = nameTagInNew ? newText.slice(nameTagInNew[0].length).trim() : newText;
-    if (spokenText.length > effectiveMax) return true;
-    if (s.change_type === 'split' && s.split_remainder?.trim().length > 60) return true;
+    const nameTagInNew = nameTagM ? t.match(NAME_TAG_RE_SPACED) : null;
+    const spokenText = nameTagInNew ? t.slice(nameTagInNew[0].length).trim() : t;
+    return spokenText.length > effectiveMax;
+  };
+
+  const _isOversized = s => {
+    const origCap = captionsMapForFilter.get(s.caption_index);
+    if (_textOversized(s.new_text, origCap)) return true;
+    // A split remainder becomes its own caption (no name tag) — full 60 when flat.
+    if (s.change_type === 'split' && _textOversized(s.split_remainder, null)) return true;
     return false;
   };
 
@@ -347,26 +382,42 @@ function validateSuggestionChains(suggestions, captions) {
       if (origTokens.join(' ') !== newTokens.join(' ')) reason = 'text not conserved across chain (words lost, duplicated, or altered)';
     }
 
-    // Line feasibility: every suggested text must render as ≤2 lines within the
-    // tolerance. (The 60-char limit alone does not guarantee this — split depends
-    // on word boundaries.) Target is 30 chars/line, but lines of 31-32 are allowed
-    // through: the Review tab flags any >30 line with a long-line warning for human
-    // judgment, matching how Stage 1's own occasional 31+ lines are handled. Eval
-    // data (48 runs): a strict 30 here discarded ~12% of suggestions — almost all
-    // good merges over a 1-char overflow. Set to 30 to enforce absolutely.
-    const LINE_FEASIBILITY_TOLERANCE = 32;
+    // Line feasibility — STRICT 30 chars/line (Premiere force-wraps at 30, so an
+    // overflowing line is silently hidden; never acceptable).
+    // Line-level texts (\n present, the production prompt format): validate
+    // Gemini's own lines directly — ≤2 spoken lines, each ≤30; for a caption
+    // that owns a name tag, the tag must sit alone on line 1.
+    // Flat texts (legacy / model ignored the format): simulate the frontend's
+    // splitLines and require a clean ≤30/≤30 result.
     if (!reason) {
       outer:
       for (const s of chainSugs) {
+        const origCap = capByIdx.get(s.caption_index);
+        const origHasTag = !!(origCap && (origCap.text || '').match(NAME_TAG_RE_SPACED));
         for (const t of [s.new_text, s.split_remainder]) {
           if (!t || !String(t).trim()) continue;
-          // Name-tag captions render as [tag, spoken] — only the spoken text is line-split.
-          const tagM = String(t).match(NAME_TAG_RE_SPACED);
-          const renderable = tagM ? String(t).slice(tagM[0].length).trim() : String(t).trim();
-          const lines = splitLinesForCheck(renderable);
-          if (lines.length > 2 || lines.some(l => l.length > LINE_FEASIBILITY_TOLERANCE)) {
-            reason = `"${renderable.slice(0, 50)}..." cannot split into two lines of ≤${LINE_FEASIBILITY_TOLERANCE} chars`;
-            break outer;
+          const str = String(t).trim();
+          const isRemainder = t === s.split_remainder;
+          if (str.includes('\n')) {
+            const lines = str.split('\n').map(l => l.trim()).filter(Boolean);
+            const tagFirst = NAME_TAG_RE_SPACED.test(lines[0] || '') && lines[0].endsWith(':');
+            if (origHasTag && !isRemainder && !tagFirst) {
+              reason = `caption #${s.caption_index} has a name tag but line 1 of new_text is not the tag alone`;
+              break outer;
+            }
+            const spokenLines = tagFirst ? lines.slice(1) : lines;
+            if (spokenLines.length > 2 || spokenLines.some(l => l.length > 30)) {
+              reason = `"${str.replace(/\n/g, ' / ').slice(0, 50)}..." has a spoken line over 30 chars (or >2 lines)`;
+              break outer;
+            }
+          } else {
+            const tagM = str.match(NAME_TAG_RE_SPACED);
+            const renderable = tagM ? str.slice(tagM[0].length).trim() : str;
+            const lines = splitLinesForCheck(renderable);
+            if (lines.length > 2 || lines.some(l => l.length > 30)) {
+              reason = `"${renderable.slice(0, 50)}..." cannot split into two ≤30-char lines`;
+              break outer;
+            }
           }
         }
       }

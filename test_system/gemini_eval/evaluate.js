@@ -90,24 +90,40 @@ function evaluateRun(run, stage1) {
     if (!CHANGE_TYPES.has(s.change_type)) add('B-schema', 'error', `${tag}: invalid change_type "${s.change_type}"`);
     if (!Array.isArray(s.linked_suggestions)) add('B-schema', 'error', `${tag}: linked_suggestions missing or not an array`);
     if (s.split_remainder && s.change_type !== 'split') add('B-schema', 'warn', `${tag}: split_remainder present but change_type is "${s.change_type}"`);
-    if (s.new_text && /\n/.test(s.new_text)) add('B-schema', 'warn', `${tag}: new_text contains a line break (prompt demands flat string)`);
+    // Flat-prompt runs must not contain line breaks; line-level runs are expected to.
+    const isLineLevel = run.prompt_opts && run.prompt_opts.lineLevel;
+    if (!isLineLevel && s.new_text && /\n/.test(s.new_text)) add('B-schema', 'warn', `${tag}: new_text contains a line break (flat prompt demands flat string)`);
   }
   const dupIdx = suggestions.map(s => s.caption_index).filter((v, i, a) => a.indexOf(v) !== i);
   for (const d of [...new Set(dupIdx)]) add('B-schema', 'error', `#${d}: multiple suggestions for the same caption_index`);
 
-  // C. Character limits (on raw suggestions — what Gemini actually returned)
-  for (const s of suggestions) {
+  // C. Character limits (on raw suggestions — what Gemini actually returned).
+  // Multiline texts (line-level prompt) are judged per line: each spoken line ≤30,
+  // ≤2 spoken lines. Flat texts use the legacy total limits (60 / 30 name-tag spoken).
+  const checkText = (s, text, what, isRemainder) => {
+    if (typeof text !== 'string') return;
+    const t = text.trim();
+    if (!t) return;
     const cap = capByIdx.get(s.caption_index);
-    if (!cap || typeof s.new_text !== 'string') continue;
-    const newText = s.new_text.trim();
-    if (!newText) continue;
-    const origTag = (cap.text || '').match(NAME_TAG_RE);
+    if (t.includes('\n')) {
+      const lines = t.split('\n').map(l => l.trim()).filter(Boolean);
+      const tagFirst = NAME_TAG_RE.test(lines[0] || '') && lines[0].endsWith(':');
+      const spokenLines = tagFirst ? lines.slice(1) : lines;
+      for (const l of spokenLines) {
+        if (l.length > 30) add('C-charlimit', 'error', `#${s.caption_index}: ${what} line ${l.length} chars > 30 — "${l}"`);
+      }
+      if (spokenLines.length > 2) add('C-charlimit', 'error', `#${s.caption_index}: ${what} has ${spokenLines.length} spoken lines (max 2)`);
+      return;
+    }
+    const origTag = cap && !isRemainder ? (cap.text || '').match(NAME_TAG_RE) : null;
     const max = origTag ? 30 : 60;
-    const tagInNew = origTag ? newText.match(NAME_TAG_RE) : null;
-    const spoken = tagInNew ? newText.slice(tagInNew[0].length).trim() : newText;
-    if (spoken.length > max) add('C-charlimit', 'error', `#${s.caption_index}: spoken text ${spoken.length} chars > ${max} max — "${spoken}"`);
-    if (s.change_type === 'split' && s.split_remainder && s.split_remainder.trim().length > 60)
-      add('C-charlimit', 'error', `#${s.caption_index}: split_remainder ${s.split_remainder.trim().length} chars > 60 — "${s.split_remainder.trim()}"`);
+    const tagInNew = origTag ? t.match(NAME_TAG_RE) : null;
+    const spoken = tagInNew ? t.slice(tagInNew[0].length).trim() : t;
+    if (spoken.length > max) add('C-charlimit', 'error', `#${s.caption_index}: ${what} ${spoken.length} chars > ${max} max — "${spoken}"`);
+  };
+  for (const s of suggestions) {
+    checkText(s, s.new_text, 'spoken text', false);
+    if (s.change_type === 'split') checkText(s, s.split_remainder, 'split_remainder', true);
   }
 
   // D. Linked suggestion symmetry + dangling links
@@ -264,7 +280,7 @@ function armSummary(evals) {
 }
 
 function main() {
-  const runFiles = fs.readdirSync(RESULTS_DIR).filter(f => /^ep\d+_[a-z-]+_run\d+\.json$/.test(f)).sort();
+  const runFiles = fs.readdirSync(RESULTS_DIR).filter(f => /^ep\d+_[a-z0-9-]+_run\d+\.json$/.test(f)).sort();
   if (!runFiles.length) { console.error('No run files in results/ — run run_eval.js first.'); process.exit(1); }
 
   const evals = [];
