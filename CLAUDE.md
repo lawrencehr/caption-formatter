@@ -40,6 +40,16 @@ node tester.js
 ```
 Configure `PROXY_URL`, `WHISPERX_URL`, `SHARED_SECRET`, and file paths at the top of `tester.js`. Output saved to `test_output.json`.
 
+**Gemini Phase-1 eval harness** (Stage 1 + Gemini suggestions, no browser/backend/WhisperX):
+```
+cd test_system/gemini_eval
+npm install                # first time only
+set GEMINI_API_KEY=AIza...
+node run_eval.js           # all episodes in "Test files/" × 2 runs
+node evaluate.js           # score against standards → results/report.md
+```
+Uses `backend/lib/gemini.js` (shared with `server.js`) for the exact production prompt, and `stage1.js` (Node port of the frontend Stage 1 — keep in sync if the frontend changes).
+
 ## Required environment variables (backend)
 
 | Variable | Description |
@@ -105,6 +115,8 @@ Stage 1 (format) and Stage 2 (AI refine) logic panels are wrapped inside the Pha
 
 - `frontend/ABC_Caption_Formatter_v3.html` — entire frontend (~7,600 lines). CSS Phase A–E at top (~2,800 lines). Stage 1 logic: `processCaptions()`, `deriveItalic()`, `shouldBeItalic()`, `splitLines()`. Stage 2 logic: `refineWithAI()` (Phase 1 call), `downloadRefinedSRT()` (Phase 2 call), `mapApiCaption()`, `renderDiffView()`, `aiIsSeparate()` / `aiBuildLinkGroups()` (linked suggestion handling), `aiWordDiff()`.
 - `backend/server.js` — single Express file (~828 lines). Gemini prompt is inline (~160 lines, forbids text rewriting, defines suggestion JSON schema). Per-model `generationConfig` (v3.x uses `thinkingLevel: 'low'`, v2.x uses `temperature: 0.1`).
+- `backend/lib/gemini.js` — shared Gemini Phase 1 logic: prompt builder, per-model `generationConfig`, response parse/salvage, oversized-suggestion filter. Used by `server.js` and the eval harness.
+- `test_system/gemini_eval/` — offline eval harness: `stage1.js` (Node port of frontend Stage 1), `run_eval.js` (Gemini runner), `evaluate.js` (standards checker → `results/report.md`). Note: `Test files/ep12/ep12_subtitles.srt` is mislabelled (contains ep11 captions).
 - `backend/lib/matcher.js` — sequence matching engine (~188 lines). `normaliseCaption()` expands currency/years/numbers to words; `matchCaptionsToTranscript()` uses forward greedy cursor with SEARCH_AHEAD=40, SLACK=8, MIN_RATIO=0.6.
 - `whisperx-server/server.py` — FastAPI app (~351 lines). Model loaded at startup via lifespan context manager. CUDA auto-detected; falls back to CPU. `WHISPER_MODEL` env var controls which ASR model loads (default: `medium`).
 - `test_system/tester.js` — E2E test runner; configure file paths and URLs at the top.

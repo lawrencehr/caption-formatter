@@ -13,6 +13,7 @@ frontend/config.js
 
 # Runtime
 backend/temp/
+test_system/gemini_eval/results/
 
 # OS
 .DS_Store
