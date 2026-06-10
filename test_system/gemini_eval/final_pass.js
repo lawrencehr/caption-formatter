@@ -70,7 +70,12 @@ function evaluateFinalPass(run, stage1) {
     const italic = (!c.changed && orig)
       ? orig.italic
       : (typeof c.italic === 'boolean' ? c.italic : deriveItalic(c.text, segs));
-    return { ...c, lines: splitLines(c.text || ''), italic_final: italic };
+    // Mirror mapApiCaption: Gemini's explicit line breaks win; flat text → splitLines.
+    const text = c.text || '';
+    const lines = text.includes('\n')
+      ? text.split('\n').map(l => l.trim()).filter(Boolean)
+      : splitLines(text);
+    return { ...c, lines, italic_final: italic };
   });
 
   // ── L. Line lengths ─────────────────────────────────────────────────────────
@@ -130,7 +135,7 @@ function evaluateFinalPass(run, stage1) {
 }
 
 function main() {
-  const runFiles = fs.readdirSync(RESULTS_DIR).filter(f => /^ep\d+_[a-z-]+_run\d+\.json$/.test(f)).sort();
+  const runFiles = fs.readdirSync(RESULTS_DIR).filter(f => /^ep\d+_[a-z0-9-]+_run\d+\.json$/.test(f)).sort();
   if (!runFiles.length) { console.error('No run files in results/.'); process.exit(1); }
 
   const rows = [];

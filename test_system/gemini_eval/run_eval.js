@@ -124,7 +124,7 @@ async function callGemini(promptText, audioBase64, thinkingLevel, log) {
   throw new Error('All Gemini models exhausted (overloaded)');
 }
 
-async function runEpisode(testFilesDir, ep, runNum, { thinkingLevel, includeAudio, label }) {
+async function runEpisode(testFilesDir, ep, runNum, { thinkingLevel, includeAudio, label, promptOpts }) {
   const base = path.join(testFilesDir, ep);
   const srtText = fs.readFileSync(path.join(base, `${ep}_subtitles.srt`), 'utf8');
   const docxBuffer = fs.readFileSync(path.join(base, `${ep}_transcript.docx`));
@@ -146,8 +146,8 @@ async function runEpisode(testFilesDir, ep, runNum, { thinkingLevel, includeAudi
     }, null, 2));
   }
 
-  const prompt = buildGeminiPrompt(stage1.apiCaptions);
-  log(`calling Gemini (prompt ${prompt.length} chars${audioBase64 ? `, audio ${(audioBase64.length * 0.75 / 1024 / 1024).toFixed(1)}MB` : ', NO audio'}, thinking=${thinkingLevel})...`);
+  const prompt = buildGeminiPrompt(stage1.apiCaptions, promptOpts);
+  log(`calling Gemini (prompt ${prompt.length} chars${audioBase64 ? `, audio ${(audioBase64.length * 0.75 / 1024 / 1024).toFixed(1)}MB` : ', NO audio'}, thinking=${thinkingLevel}${promptOpts.maxChars ? `, maxChars=${promptOpts.maxChars}` : ''}${promptOpts.lineLevel ? ', LINE-LEVEL' : ''})...`);
 
   const geminiStart = Date.now();
   const { model, data } = await callGemini(prompt, audioBase64, thinkingLevel, log);
@@ -168,6 +168,7 @@ async function runEpisode(testFilesDir, ep, runNum, { thinkingLevel, includeAudi
     label,
     thinking_level: thinkingLevel,
     audio_included: includeAudio,
+    prompt_opts: promptOpts,
     timestamp: new Date().toISOString(),
     model,
     gemini_ms: geminiMs,
@@ -204,12 +205,24 @@ async function main() {
   if (noAudioIdx !== -1) { includeAudio = false; args.splice(noAudioIdx, 1); }
   const audioIdx = args.indexOf('--audio');
   if (audioIdx !== -1) { includeAudio = true; args.splice(audioIdx, 1); }
+  // Line-level prompt is the production default; --flat selects the legacy flat prompt.
+  const promptOpts = { lineLevel: true };
+  const maxCharsIdx = args.indexOf('--max-chars');
+  if (maxCharsIdx !== -1) { promptOpts.maxChars = Number(args[maxCharsIdx + 1]); args.splice(maxCharsIdx, 2); }
+  const lineLevelIdx = args.indexOf('--line-level');
+  if (lineLevelIdx !== -1) { args.splice(lineLevelIdx, 1); }
+  const flatIdx = args.indexOf('--flat');
+  if (flatIdx !== -1) { promptOpts.lineLevel = false; args.splice(flatIdx, 1); }
 
   if (!['low', 'medium', 'high'].includes(thinkingLevel)) {
     console.error(`Invalid --thinking "${thinkingLevel}" (use low|medium|high)`);
     process.exit(1);
   }
-  const label = `${thinkingLevel}-${includeAudio ? 'audio' : 'noaudio'}`;
+  // Label scheme matches historical files: flat runs have no suffix, line-level
+  // runs end in '-lines'.
+  const label = `${thinkingLevel}-${includeAudio ? 'audio' : 'noaudio'}`
+    + (promptOpts.maxChars ? `-max${promptOpts.maxChars}` : '')
+    + (promptOpts.lineLevel ? '-lines' : '');
 
   const testFilesDir = findTestFilesDir();
   const all = discoverEpisodes(testFilesDir);
@@ -227,7 +240,7 @@ async function main() {
     const startNum = nextRunNumber(ep, label);
     for (let r = startNum; r < startNum + runs; r++) {
       try {
-        await runEpisode(testFilesDir, ep, r, { thinkingLevel, includeAudio, label });
+        await runEpisode(testFilesDir, ep, r, { thinkingLevel, includeAudio, label, promptOpts });
       } catch (err) {
         console.error(`[${ep} ${label} run${r}] FAILED: ${err.message}`);
         failures.push({ ep, run: r, error: err.message });
