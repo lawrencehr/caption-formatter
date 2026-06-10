@@ -347,8 +347,14 @@ function validateSuggestionChains(suggestions, captions) {
       if (origTokens.join(' ') !== newTokens.join(' ')) reason = 'text not conserved across chain (words lost, duplicated, or altered)';
     }
 
-    // Line feasibility: every suggested text must render as ≤2 lines of ≤30 chars.
-    // (The 60-char limit alone does not guarantee this — split depends on word boundaries.)
+    // Line feasibility: every suggested text must render as ≤2 lines within the
+    // tolerance. (The 60-char limit alone does not guarantee this — split depends
+    // on word boundaries.) Target is 30 chars/line, but lines of 31-32 are allowed
+    // through: the Review tab flags any >30 line with a long-line warning for human
+    // judgment, matching how Stage 1's own occasional 31+ lines are handled. Eval
+    // data (48 runs): a strict 30 here discarded ~12% of suggestions — almost all
+    // good merges over a 1-char overflow. Set to 30 to enforce absolutely.
+    const LINE_FEASIBILITY_TOLERANCE = 32;
     if (!reason) {
       outer:
       for (const s of chainSugs) {
@@ -358,8 +364,8 @@ function validateSuggestionChains(suggestions, captions) {
           const tagM = String(t).match(NAME_TAG_RE_SPACED);
           const renderable = tagM ? String(t).slice(tagM[0].length).trim() : String(t).trim();
           const lines = splitLinesForCheck(renderable);
-          if (lines.length > 2 || lines.some(l => l.length > 30)) {
-            reason = `"${renderable.slice(0, 50)}..." cannot split into two ≤30-char lines`;
+          if (lines.length > 2 || lines.some(l => l.length > LINE_FEASIBILITY_TOLERANCE)) {
+            reason = `"${renderable.slice(0, 50)}..." cannot split into two lines of ≤${LINE_FEASIBILITY_TOLERANCE} chars`;
             break outer;
           }
         }
