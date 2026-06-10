@@ -197,6 +197,7 @@ function evaluateRun(run, stage1) {
   return {
     episode: run.episode,
     run: run.run,
+    label: run.label || 'low-audio',
     model: run.model,
     gemini_s: +(run.gemini_ms / 1000).toFixed(1),
     salvaged: run.salvaged,
@@ -211,30 +212,67 @@ function evaluateRun(run, stage1) {
   };
 }
 
-// Run-vs-run consistency: which caption indices were suggested in both runs of an episode
-function consistency(evals) {
-  const byEp = {};
-  for (const e of evals) (byEp[e.episode] = byEp[e.episode] || []).push(e);
+// Run-vs-run consistency within each (episode, arm): mean pairwise Jaccard of
+// suggested caption-index sets.
+function consistency(evals, runsByKey) {
+  const byGroup = {};
+  for (const e of evals) {
+    const key = `${e.episode}|${e.label}`;
+    (byGroup[key] = byGroup[key] || []).push(e);
+  }
   const rows = [];
-  for (const [ep, runs] of Object.entries(byEp)) {
+  for (const [key, runs] of Object.entries(byGroup).sort()) {
     if (runs.length < 2) continue;
-    const sets = runs.map(r => new Set(
-      (JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, `${ep}_run${r.run}.json`), 'utf8'))).suggestions_raw.map(s => s.caption_index)
-    ));
-    const inter = [...sets[0]].filter(x => sets.slice(1).every(s => s.has(x)));
-    const union = new Set(sets.flatMap(s => [...s]));
-    rows.push({ ep, sizes: sets.map(s => s.size), overlap: inter.length, union: union.size, jaccard: union.size ? +(inter.length / union.size).toFixed(2) : 1 });
+    const [ep, label] = key.split('|');
+    const sets = runs.map(r => new Set(runsByKey.get(`${ep}|${label}|${r.run}`).suggestions_raw.map(s => s.caption_index)));
+    const jaccards = [];
+    for (let i = 0; i < sets.length; i++) {
+      for (let j = i + 1; j < sets.length; j++) {
+        const inter = [...sets[i]].filter(x => sets[j].has(x)).length;
+        const union = new Set([...sets[i], ...sets[j]]).size;
+        jaccards.push(union ? inter / union : 1);
+      }
+    }
+    const mean = jaccards.reduce((a, b) => a + b, 0) / jaccards.length;
+    rows.push({ ep, label, n: runs.length, sizes: sets.map(s => s.size), jaccard: +mean.toFixed(2) });
+  }
+  return rows;
+}
+
+// Per-arm aggregates for the A/B comparison
+function armSummary(evals) {
+  const byArm = {};
+  for (const e of evals) (byArm[e.label] = byArm[e.label] || []).push(e);
+  const rows = [];
+  for (const [label, runs] of Object.entries(byArm).sort()) {
+    const totalSugs = runs.reduce((a, e) => a + e.n_suggestions, 0);
+    // Suggestion-level violations: count error issues tied to specific suggestions (B/C/D/F/G checks)
+    const sugErrors = runs.reduce((a, e) => a + e.errors.filter(i => /^(B|C|D|F|G)/.test(i.check)).length, 0);
+    const lossRuns = runs.filter(e => e.errors.some(i => i.check === 'E-textloss')).length;
+    rows.push({
+      label,
+      n_runs: runs.length,
+      error_runs: runs.filter(e => e.errors.length).length,
+      total_suggestions: totalSugs,
+      suggestion_errors: sugErrors,
+      textloss_runs: lossRuns,
+      mean_suggestions: +(totalSugs / runs.length).toFixed(1),
+      mean_time_s: +(runs.reduce((a, e) => a + e.gemini_s, 0) / runs.length).toFixed(1),
+    });
   }
   return rows;
 }
 
 function main() {
-  const runFiles = fs.readdirSync(RESULTS_DIR).filter(f => /^ep\d+_run\d+\.json$/.test(f)).sort();
+  const runFiles = fs.readdirSync(RESULTS_DIR).filter(f => /^ep\d+_[a-z-]+_run\d+\.json$/.test(f)).sort();
   if (!runFiles.length) { console.error('No run files in results/ — run run_eval.js first.'); process.exit(1); }
 
   const evals = [];
+  const runsByKey = new Map();
   for (const f of runFiles) {
     const run = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, f), 'utf8'));
+    run.label = run.label || 'low-audio';
+    runsByKey.set(`${run.episode}|${run.label}|${run.run}`, run);
     const stage1 = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, `${run.episode}_stage1.json`), 'utf8'));
     evals.push(evaluateRun(run, stage1));
   }
@@ -245,12 +283,20 @@ function main() {
   L.push('');
   L.push(`Generated: ${new Date().toISOString()}`);
   L.push('');
+  L.push('## A/B arm comparison');
+  L.push('');
+  L.push('| Arm | Runs | Runs with errors | Mean suggestions/run | Suggestion-level errors | Text-loss runs | Mean time |');
+  L.push('|---|---|---|---|---|---|---|');
+  for (const a of armSummary(evals)) {
+    L.push(`| ${a.label} | ${a.n_runs} | ${a.error_runs} (${Math.round(a.error_runs / a.n_runs * 100)}%) | ${a.mean_suggestions} | ${a.suggestion_errors} of ${a.total_suggestions} | ${a.textloss_runs} | ${a.mean_time_s}s |`);
+  }
+  L.push('');
   L.push('## Summary');
   L.push('');
-  L.push('| Run | Model | Time | Captions | Suggestions | Filtered out | Errors | Warnings | Salvaged |');
-  L.push('|---|---|---|---|---|---|---|---|---|');
+  L.push('| Run | Arm | Model | Time | Captions | Suggestions | Filtered out | Errors | Warnings | Salvaged |');
+  L.push('|---|---|---|---|---|---|---|---|---|---|');
   for (const e of evals) {
-    L.push(`| ${e.episode} run${e.run} | ${e.model} | ${e.gemini_s}s | ${e.n_captions} | ${e.n_suggestions} | ${e.n_filtered_out} | ${e.errors.length} | ${e.warnings.length} | ${e.salvaged ? 'YES' : 'no'} |`);
+    L.push(`| ${e.episode} run${e.run} | ${e.label} | ${e.model} | ${e.gemini_s}s | ${e.n_captions} | ${e.n_suggestions} | ${e.n_filtered_out} | ${e.errors.length} | ${e.warnings.length} | ${e.salvaged ? 'YES' : 'no'} |`);
   }
   L.push('');
 
@@ -275,20 +321,20 @@ function main() {
   }
   L.push('');
 
-  const cons = consistency(evals);
+  const cons = consistency(evals, runsByKey);
   if (cons.length) {
-    L.push('## Run-to-run consistency (same episode, repeated runs)');
+    L.push('## Run-to-run consistency (same episode + arm, repeated runs)');
     L.push('');
-    L.push('| Episode | Suggestions per run | Overlap (same captions) | Jaccard |');
-    L.push('|---|---|---|---|');
-    for (const c of cons) L.push(`| ${c.ep} | ${c.sizes.join(' / ')} | ${c.overlap} of ${c.union} | ${c.jaccard} |`);
+    L.push('| Episode | Arm | Runs | Suggestions per run | Mean pairwise Jaccard |');
+    L.push('|---|---|---|---|---|');
+    for (const c of cons) L.push(`| ${c.ep} | ${c.label} | ${c.n} | ${c.sizes.join(' / ')} | ${c.jaccard} |`);
     L.push('');
   }
 
   L.push('## Per-run detail');
   for (const e of evals) {
     L.push('');
-    L.push(`### ${e.episode} run${e.run} — ${e.model}, ${e.gemini_s}s, ${e.n_suggestions} suggestions (${Object.entries(e.type_counts).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'})`);
+    L.push(`### ${e.episode} ${e.label} run${e.run} — ${e.model}, ${e.gemini_s}s, ${e.n_suggestions} suggestions (${Object.entries(e.type_counts).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'})`);
     if (e.finish_reason && e.finish_reason !== 'STOP') L.push(`- finishReason: **${e.finish_reason}**`);
     if (!e.errors.length && !e.warnings.length) { L.push('- ✓ clean — all standards met'); continue; }
     for (const i of e.errors) L.push(`- ❌ **${i.check}** — ${i.detail}`);
@@ -301,9 +347,13 @@ function main() {
 
   // ── console summary ──
   console.log('\n═══ Gemini Phase-1 Evaluation ═══\n');
+  for (const a of armSummary(evals)) {
+    console.log(`${a.label.padEnd(16)} ${a.n_runs} runs · ${a.error_runs} with errors · ${a.suggestion_errors}/${a.total_suggestions} bad suggestions · ${a.textloss_runs} text-loss · avg ${a.mean_time_s}s`);
+  }
+  console.log('');
   for (const e of evals) {
     const status = e.errors.length ? `❌ ${e.errors.length} errors` : '✓ clean';
-    console.log(`${e.episode} run${e.run}  ${e.model}  ${e.n_suggestions} suggestions  ${status}${e.warnings.length ? ` (${e.warnings.length} warnings)` : ''}`);
+    console.log(`${e.episode} ${e.label} run${e.run}  ${e.n_suggestions} suggestions  ${status}${e.warnings.length ? ` (${e.warnings.length} warnings)` : ''}`);
   }
   console.log(`\nFull report: ${reportPath}`);
 }

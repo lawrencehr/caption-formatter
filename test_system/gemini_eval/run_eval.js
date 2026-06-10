@@ -1,15 +1,20 @@
 // Gemini Phase-1 evaluation runner.
 //
 // Pipeline per episode: raw SRT + transcript DOCX → Stage 1 (Node port) →
-// production Gemini prompt (backend/lib/gemini.js) + audio → suggestions.
+// production Gemini prompt (backend/lib/gemini.js) [+ audio] → suggestions.
 // No WhisperX. Each run is saved in full (raw response, parsed + filtered
 // suggestions, model used, finish reason, token usage) to results/.
 //
+// A/B arms: --thinking low|medium and --no-audio select the experiment arm.
+// Results are saved as results/<ep>_<thinking>-<audio|noaudio>_run<N>.json,
+// with run numbers continuing from any existing files for that arm.
+//
 // Usage:
 //   set GEMINI_API_KEY=AIza...
-//   node run_eval.js                  # all episodes × 2 runs
-//   node run_eval.js ep11 ep14        # specific episodes
-//   node run_eval.js --runs 3         # change runs per episode
+//   node run_eval.js                              # all episodes, +2 runs, low+audio
+//   node run_eval.js ep11 ep14 --runs 4           # specific episodes, +4 runs each
+//   node run_eval.js --runs 4 --thinking medium   # medium-thinking arm
+//   node run_eval.js --runs 4 --no-audio          # prompt only, no audio part
 //
 // Then: node evaluate.js
 
@@ -60,16 +65,26 @@ function discoverEpisodes(testFilesDir) {
     .sort();
 }
 
+function nextRunNumber(ep, label) {
+  if (!fs.existsSync(RESULTS_DIR)) return 1;
+  const re = new RegExp(`^${ep}_${label}_run(\\d+)\\.json$`);
+  let max = 0;
+  for (const f of fs.readdirSync(RESULTS_DIR)) {
+    const m = f.match(re);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return max + 1;
+}
+
 // Replicates the server's model fallback loop, but also reports which model
-// answered and the full candidate metadata.
-async function callGemini(promptText, audioBase64, log) {
+// answered and the full candidate metadata. audioBase64 may be null (no-audio arm).
+async function callGemini(promptText, audioBase64, thinkingLevel, log) {
+  const parts = [];
+  if (audioBase64) parts.push({ inline_data: { mime_type: 'audio/mpeg', data: audioBase64 } });
+  parts.push({ text: promptText });
+
   const geminiBodyBase = {
-    contents: [{
-      parts: [
-        { inline_data: { mime_type: 'audio/mpeg', data: audioBase64 } },
-        { text: promptText },
-      ],
-    }],
+    contents: [{ parts }],
     safetySettings: [
       { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
       { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -81,7 +96,7 @@ async function callGemini(promptText, audioBase64, log) {
   for (let attempt = 0; attempt < GEMINI_MODELS.length; attempt++) {
     const model = GEMINI_MODELS[attempt];
     if (attempt > 0) log(`  falling back to ${model}...`);
-    const body = { ...geminiBodyBase, generationConfig: geminiConfigFor(model) };
+    const body = { ...geminiBodyBase, generationConfig: geminiConfigFor(model, { thinkingLevel }) };
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5 * 60 * 1000);
@@ -109,17 +124,16 @@ async function callGemini(promptText, audioBase64, log) {
   throw new Error('All Gemini models exhausted (overloaded)');
 }
 
-async function runEpisode(testFilesDir, ep, runNum) {
+async function runEpisode(testFilesDir, ep, runNum, { thinkingLevel, includeAudio, label }) {
   const base = path.join(testFilesDir, ep);
   const srtText = fs.readFileSync(path.join(base, `${ep}_subtitles.srt`), 'utf8');
   const docxBuffer = fs.readFileSync(path.join(base, `${ep}_transcript.docx`));
-  const audioBase64 = fs.readFileSync(path.join(base, `${ep}_audio.mp3`)).toString('base64');
+  const audioBase64 = includeAudio ? fs.readFileSync(path.join(base, `${ep}_audio.mp3`)).toString('base64') : null;
 
-  const log = msg => console.log(`[${ep} run${runNum}] ${msg}`);
+  const log = msg => console.log(`[${ep} ${label} run${runNum}] ${msg}`);
 
-  const stage1Start = Date.now();
   const stage1 = await runStage1(srtText, docxBuffer);
-  log(`stage 1: ${stage1.rawCaptions.length} raw → ${stage1.result.length} formatted captions, ${stage1.boldSegments.length} bold segments (${Date.now() - stage1Start}ms)`);
+  log(`stage 1: ${stage1.rawCaptions.length} raw → ${stage1.result.length} formatted captions, ${stage1.boldSegments.length} bold segments`);
 
   // Save Stage 1 output once per episode (identical across runs — it is deterministic)
   const stage1Path = path.join(RESULTS_DIR, `${ep}_stage1.json`);
@@ -133,10 +147,10 @@ async function runEpisode(testFilesDir, ep, runNum) {
   }
 
   const prompt = buildGeminiPrompt(stage1.apiCaptions);
-  log(`calling Gemini (prompt ${prompt.length} chars, audio ${(audioBase64.length * 0.75 / 1024 / 1024).toFixed(1)}MB)...`);
+  log(`calling Gemini (prompt ${prompt.length} chars${audioBase64 ? `, audio ${(audioBase64.length * 0.75 / 1024 / 1024).toFixed(1)}MB` : ', NO audio'}, thinking=${thinkingLevel})...`);
 
   const geminiStart = Date.now();
-  const { model, data } = await callGemini(prompt, audioBase64, log);
+  const { model, data } = await callGemini(prompt, audioBase64, thinkingLevel, log);
   const geminiMs = Date.now() - geminiStart;
 
   const candidate = data.candidates?.[0];
@@ -151,6 +165,9 @@ async function runEpisode(testFilesDir, ep, runNum) {
   const out = {
     episode: ep,
     run: runNum,
+    label,
+    thinking_level: thinkingLevel,
+    audio_included: includeAudio,
     timestamp: new Date().toISOString(),
     model,
     gemini_ms: geminiMs,
@@ -163,7 +180,7 @@ async function runEpisode(testFilesDir, ep, runNum) {
     suggestions_filtered: filtered.kept,
     filter_dropped_indices: filtered.droppedIndices,
   };
-  fs.writeFileSync(path.join(RESULTS_DIR, `${ep}_run${runNum}.json`), JSON.stringify(out, null, 2));
+  fs.writeFileSync(path.join(RESULTS_DIR, `${ep}_${label}_run${runNum}.json`), JSON.stringify(out, null, 2));
   return out;
 }
 
@@ -175,8 +192,21 @@ async function main() {
 
   const args = process.argv.slice(2);
   let runs = 2;
+  let thinkingLevel = 'low';
+  let includeAudio = true;
+
   const runsIdx = args.indexOf('--runs');
   if (runsIdx !== -1) { runs = Number(args[runsIdx + 1]) || 2; args.splice(runsIdx, 2); }
+  const thinkIdx = args.indexOf('--thinking');
+  if (thinkIdx !== -1) { thinkingLevel = args[thinkIdx + 1]; args.splice(thinkIdx, 2); }
+  const noAudioIdx = args.indexOf('--no-audio');
+  if (noAudioIdx !== -1) { includeAudio = false; args.splice(noAudioIdx, 1); }
+
+  if (!['low', 'medium', 'high'].includes(thinkingLevel)) {
+    console.error(`Invalid --thinking "${thinkingLevel}" (use low|medium|high)`);
+    process.exit(1);
+  }
+  const label = `${thinkingLevel}-${includeAudio ? 'audio' : 'noaudio'}`;
 
   const testFilesDir = findTestFilesDir();
   const all = discoverEpisodes(testFilesDir);
@@ -187,15 +217,16 @@ async function main() {
   }
 
   fs.mkdirSync(RESULTS_DIR, { recursive: true });
-  console.log(`Episodes: ${episodes.join(', ')} × ${runs} runs (test files: ${testFilesDir})\n`);
+  console.log(`Arm: ${label} · Episodes: ${episodes.join(', ')} · +${runs} runs each (test files: ${testFilesDir})\n`);
 
   const failures = [];
   for (const ep of episodes) {
-    for (let r = 1; r <= runs; r++) {
+    const startNum = nextRunNumber(ep, label);
+    for (let r = startNum; r < startNum + runs; r++) {
       try {
-        await runEpisode(testFilesDir, ep, r);
+        await runEpisode(testFilesDir, ep, r, { thinkingLevel, includeAudio, label });
       } catch (err) {
-        console.error(`[${ep} run${r}] FAILED: ${err.message}`);
+        console.error(`[${ep} ${label} run${r}] FAILED: ${err.message}`);
         failures.push({ ep, run: r, error: err.message });
       }
     }
