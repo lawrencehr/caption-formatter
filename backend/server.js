@@ -474,7 +474,7 @@ app.post('/api/refine', async (req, res) => {
 // Merge logic lives in lib/merge.js (shared with the eval harness).
 const { mergeCaptionSuggestions: _mergeCaptionSuggestions } = require('./lib/merge');
 
-app.get('/', (req, res) => res.send('ABC Caption Proxy — OK'));
+app.get('/', (req, res) => res.send('Caption Formatter Proxy — OK'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Proxy running on port ${PORT}`));

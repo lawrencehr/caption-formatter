@@ -2,7 +2,7 @@
 
 ## Overview
 
-ABC Caption Formatter v3 adds AI-powered caption refinement via a 3-component system:
+Caption Formatter v3 adds AI-powered caption refinement via a 3-component system:
 
 1. **WhisperX Server** (Python FastAPI) — Force-aligns audio to captions with word-level timing
 2. **Render Proxy** (Node.js Express) — Orchestrates Gemini + WhisperX pipeline
@@ -24,7 +24,7 @@ This guide assumes you already have:
 **On your Windows home machine:**
 
 ```bash
-cd abc-captions/whisperx-server
+cd caption-formatter/whisperx-server
 
 # Copy env template
 copy .env.example .env
@@ -55,7 +55,7 @@ cloudflared tunnel login
 # (Opens browser, click "Authorize")
 
 # Create tunnel
-cloudflared tunnel create whisperx-abc
+cloudflared tunnel create whisperx-captions
 
 # Note the UUID shown, then edit ~/.cloudflared/config.yml:
 tunnel: <paste-UUID-here>
@@ -64,21 +64,21 @@ ingress:
   - service: http://localhost:8765
 
 # Start tunnel
-cloudflared tunnel run whisperx-abc
+cloudflared tunnel run whisperx-captions
 
 # Test it (in a new terminal):
 curl https://<subdomain>.trycloudflare.com/health
 # Should get the same JSON response
 ```
 
-**Save the public URL** (e.g., `https://whisperx-abc.trycloudflare.com`) — you'll need it in step 4.
+**Save the public URL** (e.g., `https://whisperx-captions.trycloudflare.com`) — you'll need it in step 4.
 
 ### 3. Deploy Backend to Render (15 minutes)
 
 **In your Render dashboard:**
 
 1. Create new "Web Service"
-2. Connect your GitHub repo (abc-captions)
+2. Connect your GitHub repo (caption-formatter)
 3. Set build command: `npm install`
 4. Set start command: `npm start`
 5. Set environment variables:
@@ -86,7 +86,7 @@ curl https://<subdomain>.trycloudflare.com/health
    SHARED_SECRET = your-secret-here
    ANTHROPIC_API_KEY = sk-...
    GEMINI_API_KEY = your-gemini-key
-   WHISPERX_URL = https://whisperx-abc.trycloudflare.com
+   WHISPERX_URL = https://whisperx-captions.trycloudflare.com
    ```
 6. Click "Create Web Service"
 7. Wait for deployment (~2 min)
@@ -94,7 +94,7 @@ curl https://<subdomain>.trycloudflare.com/health
 
 ### 4. Update Frontend Config (2 minutes)
 
-**In `frontend/ABC_Caption_Formatter_v3.html` lines 316-317:**
+**In `frontend/caption_formatter.html` lines 316-317:**
 
 ```javascript
 const API_BASE_URL = 'https://<service>.onrender.com';  // From step 3
@@ -103,7 +103,7 @@ const API_SECRET = 'your-secret-here';                   // Must match step 1
 
 ### 5. Test End-to-End (10 minutes)
 
-1. **Open** `frontend/ABC_Caption_Formatter_v3.html` in browser
+1. **Open** `frontend/caption_formatter.html` in browser
 2. **Upload** SRT + .docx (Stage 1 — this part is unchanged)
 3. **Click** "Format captions"
 4. **Upload** MP3 audio file
@@ -182,7 +182,7 @@ winget install --id Cloudflare.cloudflared
 cloudflared tunnel login
 
 # Create tunnel
-cloudflared tunnel create whisperx-abc
+cloudflared tunnel create whisperx-captions
 # Output includes UUID and credentials file path
 # Save the UUID!
 
@@ -193,7 +193,7 @@ ingress:
   - service: http://localhost:8765
 
 # Run tunnel
-cloudflared tunnel run whisperx-abc
+cloudflared tunnel run whisperx-captions
 
 # In new terminal, test:
 curl https://[SUBDOMAIN].trycloudflare.com/health
@@ -207,7 +207,7 @@ cloudflared service install
 net start cloudflared
 
 # Option B: Task Scheduler
-# Create task → Trigger: "At startup" → Action: cloudflared tunnel run whisperx-abc
+# Create task → Trigger: "At startup" → Action: cloudflared tunnel run whisperx-captions
 ```
 
 **Troubleshooting:**
@@ -252,7 +252,7 @@ net start cloudflared
    SHARED_SECRET = your-secret-12345
    ANTHROPIC_API_KEY = sk-ant-...
    GEMINI_API_KEY = AIzaSy...
-   WHISPERX_URL = https://whisperx-abc.trycloudflare.com
+   WHISPERX_URL = https://whisperx-captions.trycloudflare.com
    ```
 
 4. Render deploys (~2 min) and shows service URL
@@ -260,7 +260,7 @@ net start cloudflared
 **Verify:**
 ```bash
 curl https://[SERVICE].onrender.com/
-# Expect: "ABC Caption Proxy — OK"
+# Expect: "Caption Formatter Proxy — OK"
 ```
 
 **Troubleshooting:**
@@ -277,8 +277,8 @@ curl https://[SERVICE].onrender.com/
 ### Component 4: Frontend HTML Tool
 
 **Files:**
-- `frontend/ABC_Caption_Formatter_v3.html` — Updated with Stage 2 UI
-- `frontend/ABC_Caption_Formatter_v3_DOCUMENTATION.md` — User guide
+- `frontend/caption_formatter.html` — Updated with Stage 2 UI
+- `frontend/caption_formatter_DOCUMENTATION.md` — User guide
 
 **Configuration (REQUIRED):**
 
@@ -292,7 +292,7 @@ const API_SECRET = 'your-secret-12345';                  // Must match SHARED_SE
 **Deployment Options:**
 
 A) **Local file** (easiest for testing):
-   - Open `frontend/ABC_Caption_Formatter_v3.html` in browser
+   - Open `frontend/caption_formatter.html` in browser
    - Works immediately if Render + WhisperX are configured
 
 B) **GitHub Pages** (host for free):
@@ -440,7 +440,7 @@ User's Browser (HTML)
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| "WhisperX unreachable" | Tunnel not running | `cloudflared tunnel run whisperx-abc` |
+| "WhisperX unreachable" | Tunnel not running | `cloudflared tunnel run whisperx-captions` |
 | "Invalid X-Secret" | Mismatch between components | Verify all 3 have same value |
 | Timing is off by >500ms | Audio quality or caption mismatch | Check audio is 128kbps MP3 |
 | Gemini returns empty [] | Captions already perfect | Expected! Download uses Stage 1 |
@@ -466,7 +466,7 @@ User's Browser (HTML)
 - **Cloudflare Tunnel:** See `whisperx-server/README.md` (Cloudflare section)
 - **Render proxy:** See `backend/README.md`
 - **Stage 2 design:** See `STAGE_2_DESIGN.md`
-- **Original tool:** See `frontend/ABC_Caption_Formatter_v3_DOCUMENTATION.md`
+- **Original tool:** See `frontend/caption_formatter_DOCUMENTATION.md`
 - **Implementation notes:** See `IMPLEMENTATION_NOTES.md`
 
 ---

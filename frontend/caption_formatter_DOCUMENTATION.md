@@ -1,8 +1,8 @@
-# ABC Caption Formatter v2 — Full Documentation
+# Caption Formatter v2 — Full Documentation
 
 > Last updated: April 2026  
-> Tool file: `ABC_Caption_Formatter_v2.html`  
-> Context: Built for Media Watch social media captioning workflow at ABC
+> Tool file: `caption_formatter_v2.html`  
+> Context: Built for broadcast news social media captioning workflow
 
 ---
 
@@ -54,14 +54,14 @@ It also detects and flags structural problems that Premiere creates when auto-ge
 6. Once Premiere finishes transcribing: in Transcript tab, click the left button (Show Source Monitor Transcript), select all (Cmd+A), click Merge Segments
 7. Paste the cleaned Google Doc text over the Premiere transcript
 8. Click right button (Show Program Monitor Transcript), then click **CC** (Create Captions)
-9. Settings: Style = ABC Captions 2024, Max length = 30, Min duration = 6, Gap = 0, Lines = Double
+9. Settings: Style = Captions 2024, Max length = 30, Min duration = 6, Gap = 0, Lines = Double
 10. Do manual timing fixes in the Captions tab (Step 5 of the PDF guide)
 11. **File → Export → Captions → SubRip (.srt)** — tick **Include Styling**
 
 **In the tool:**
 
 12. Download the Google Doc transcript: **File → Download → Microsoft Word (.docx)**
-13. Open `ABC_Caption_Formatter_v2.html` in Chrome (double-click the file — no internet needed)
+13. Open `caption_formatter_v2.html` in Chrome (double-click the file — no internet needed)
 14. Drop the `.docx` into Step 1 — wait for "X bold segments detected"
 15. Drop the `.srt` into Step 2 — wait for "X captions loaded"
 16. Click **Format captions**
@@ -72,13 +72,13 @@ It also detects and flags structural problems that Premiere creates when auto-ge
 
 19. Captions tab → **⋯ menu → Import Captions from File** → select the formatted SRT
 20. Delete the old caption track
-21. Select all captions → Properties panel → set Track Style to **ABC Captions 2024**
+21. Select all captions → Properties panel → set Track Style to **Captions 2024**
 22. Address any ⚠ flagged captions (timing splits, long lines)
 23. Watch twice to check, then export and upload
 
 ### Important note on track styles and italics
 
-Applying the ABC Captions 2024 track style **after** import can wipe italic formatting. The safest approach is:
+Applying the Captions 2024 track style **after** import can wipe italic formatting. The safest approach is:
 - Import the SRT while the track style is already set, OR
 - Set style at the track level (Caption Track Settings) rather than selecting all captions and applying
 
@@ -452,7 +452,7 @@ The tool is a **single standalone HTML file** with no external dependencies. Mam
 
 **To share:** Email or Slack the HTML file. Recipient opens it in Chrome by double-clicking.
 
-**To update the tool:** Edit `ABC_Caption_Formatter_v2.html` directly. The JS is in the `<script>` tag near the bottom of the file. The mammoth bundle is in the `<script>` tag at the very top (after the `<title>` tag).
+**To update the tool:** Edit `caption_formatter_v2.html` directly. The JS is in the `<script>` tag near the bottom of the file. The mammoth bundle is in the `<script>` tag at the very top (after the `<title>` tag).
 
 **Browser support:** Chrome only. The tool uses `DOMParser`, `FileReader`, `URL.createObjectURL`, and CSS custom properties — all supported in modern Chrome. Not tested in Firefox or Safari.
 
@@ -494,7 +494,7 @@ The Case 1 detection (`caption ends with ALL CAPS words`) could theoretically fi
 - **Does not modify timecodes** — all timing comes from the input SRT unchanged
 - **Does not enforce the style guide** beyond italic and line distribution — numbers, spelling, punctuation, swearing, ellipsis direction are not touched
 - **Does not add or remove captions** — the number of captions in the output matches the input (except when `detectTrailingPlain` splits one mixed caption into two with shared timing)
-- **Does not apply the ABC Captions 2024 font/style** — that is applied in Premiere after import
+- **Does not apply the Captions 2024 font/style** — that is applied in Premiere after import
 - **Does not do a second round of review** — the tool is the first pass, human review is still required
 - **Does not validate transcript against audio** — this was considered but the Gemini audio check feature was deprioritised in favour of the formatting workflow
 
@@ -512,7 +512,7 @@ The proxy server (`server.js`) still has the Gemini endpoint. To re-enable: add 
 
 ### Style guide AI review (Claude API)
 
-A previous version sent captions to Claude with the full ABC style guide prompt for a contextual review — practice/practise in context, lead/led, American spellings, ellipsis direction, dash usage. This was removed to simplify the workflow but the prompt is documented in conversation history and could be re-added as an optional "AI style check" button.
+A previous version sent captions to Claude with the full house style guide prompt for a contextual review — practice/practise in context, lead/led, American spellings, ellipsis direction, dash usage. This was removed to simplify the workflow but the prompt is documented in conversation history and could be re-added as an optional "AI style check" button.
 
 ### Vertical video mode
 

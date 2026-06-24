@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-ABC Caption Formatter v3 "Sunrise" — a caption refinement tool for ABC Media Watch social media videos. Stage 1 (browser-only) formats raw Premiere SRT exports using a Google Doc transcript for italic detection. Stage 2 (requires backend) uses Gemini to suggest better phrase breaks, then WhisperX to force-align the refined text to audio for accurate millisecond timestamps.
+Caption Formatter v3 "Sunrise" — a caption refinement tool for broadcast news social media videos. Stage 1 (browser-only) formats raw Premiere SRT exports using a Google Doc transcript for italic detection. Stage 2 (requires backend) uses Gemini to suggest better phrase breaks, then WhisperX to force-align the refined text to audio for accurate millisecond timestamps.
 
 ## Components and how to run them
 
-**Frontend** — no build step. Open `frontend/ABC_Caption_Formatter_v3.html` directly in a browser. Stage 1 runs entirely in-browser. Stage 2 requires the backend to be running and reachable. Backend config (API URL + Shared Secret) is stored in `localStorage` via a config modal in the UI — not in a file.
+**Frontend** — no build step. Open `frontend/caption_formatter.html` directly in a browser. Stage 1 runs entirely in-browser. Stage 2 requires the backend to be running and reachable. Backend config (API URL + Shared Secret) is stored in `localStorage` via a config modal in the UI — not in a file.
 
 **Backend proxy** (Node.js/Express, port 3000):
 ```
@@ -30,7 +30,7 @@ Health check: `curl http://localhost:8765/health` → `{"status":"ok","service":
 
 **Cloudflare Tunnel** (exposes local WhisperX to Render):
 ```
-cloudflared tunnel run whisperx-abc
+cloudflared tunnel run whisperx-captions
 ```
 
 **End-to-end test** (Phase 2 only — skips Gemini, hits WhisperX directly):
@@ -57,7 +57,7 @@ Uses `backend/lib/gemini.js` (shared with `server.js`) for the exact production 
 | `SHARED_SECRET` | Auth token — must match `whisperx-server/.env` and the frontend config modal |
 | `GEMINI_API_KEY` | Google Gemini API key |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API key (used by `/api/review` only) |
-| `WHISPERX_URL` | Public Cloudflare Tunnel URL, e.g. `https://whisperx-abc.trycloudflare.com` |
+| `WHISPERX_URL` | Public Cloudflare Tunnel URL, e.g. `https://whisperx-captions.trycloudflare.com` |
 | `PORT` | Optional, defaults to 3000 |
 | `WHISPER_MODEL` | WhisperX model name, e.g. `medium` or `large-v3` (set in `whisperx-server/.env`) |
 
@@ -91,7 +91,7 @@ Render Proxy  backend/server.js
 
 ## Frontend UI structure (Sunrise redesign)
 
-The frontend (`frontend/ABC_Caption_Formatter_v3.html`, ~7,600 lines) uses a "Broadcast Console" shell with a tab bar. CSS phases correspond to UI phases:
+The frontend (`frontend/caption_formatter.html`, ~7,600 lines) uses a "Broadcast Console" shell with a tab bar. CSS phases correspond to UI phases:
 
 - **Phase A** — Shell wrapper: sidebar + tab row (`.a-shell`, `.a-tab-row`, `.a-tab`)
 - **Phase B** — Review tab: caption list with timing/style inspection
@@ -113,7 +113,7 @@ Stage 1 (format) and Stage 2 (AI refine) logic panels are wrapped inside the Pha
 
 ## File layout (non-obvious parts)
 
-- `frontend/ABC_Caption_Formatter_v3.html` — entire frontend (~7,600 lines). CSS Phase A–E at top (~2,800 lines). Stage 1 logic: `processCaptions()`, `deriveItalic()`, `shouldBeItalic()`, `splitLines()`. Stage 2 logic: `refineWithAI()` (Phase 1 call), `downloadRefinedSRT()` (Phase 2 call), `mapApiCaption()`, `renderDiffView()`, `aiIsSeparate()` / `aiBuildLinkGroups()` (linked suggestion handling), `aiWordDiff()`.
+- `frontend/caption_formatter.html` — entire frontend (~7,600 lines). CSS Phase A–E at top (~2,800 lines). Stage 1 logic: `processCaptions()`, `deriveItalic()`, `shouldBeItalic()`, `splitLines()`. Stage 2 logic: `refineWithAI()` (Phase 1 call), `downloadRefinedSRT()` (Phase 2 call), `mapApiCaption()`, `renderDiffView()`, `aiIsSeparate()` / `aiBuildLinkGroups()` (linked suggestion handling), `aiWordDiff()`.
 - `backend/server.js` — single Express file (~828 lines). Gemini prompt is inline (~160 lines, forbids text rewriting, defines suggestion JSON schema). Per-model `generationConfig` (v3.x uses `thinkingLevel: 'low'`, v2.x uses `temperature: 0.1`).
 - `backend/lib/gemini.js` — shared Gemini Phase 1 logic: prompt builder (line-level default; `{lineLevel: false}` reproduces the legacy flat prompt), per-model `generationConfig` (thinkingLevel `medium`, A/B verified), response parse/salvage, oversized-suggestion filter (per-line for multiline texts), `validateSuggestionChains` (chain-level text-conservation / italic-boundary / strict-30 line guard, normalises self-links). Used by `server.js` and the eval harness; unit tests in `test_system/gemini_eval/_test_validator.js`.
 - `backend/lib/merge.js` — Phase 2 caption merge (`mergeCaptionSuggestions`): applies accepted suggestions, dedup rescue, split expansion, min-duration + overlap + gap resolution. Shared with the eval harness.
@@ -123,7 +123,7 @@ Stage 1 (format) and Stage 2 (AI refine) logic panels are wrapped inside the Pha
 - `test_system/tester.js` — E2E test runner; configure file paths and URLs at the top.
 - `test_system/analyze.js` — quality analysis: duration distribution, match ratio, start_delta, sequential integrity.
 - `test_system/test_matcher.js` — 22+ unit tests for `matcher.js`.
-- `ABC_Caption_Formatter_v2.html` — legacy reference, not in use.
+- `caption_formatter_v2.html` — legacy reference, not in use.
 
 ## Additional documentation
 

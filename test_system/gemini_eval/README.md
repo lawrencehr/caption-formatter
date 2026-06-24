@@ -8,7 +8,7 @@ repeatedly and scored against the caption standards.
 
 - `stage1.js` — Node port of the frontend Stage 1 pipeline (SRT parse, DOCX bold-segment
   extraction via mammoth, italic detection, mid-speaker preprocessing, `processCaptions`).
-  Functions are copied verbatim from `frontend/ABC_Caption_Formatter_v3.html`; if Stage 1
+  Functions are copied verbatim from `frontend/caption_formatter.html`; if Stage 1
   changes there, update this file to match.
 - `run_eval.js` — for each episode in `Test files/`, runs Stage 1, builds the **production
   prompt** (shared module `backend/lib/gemini.js` — the exact code `server.js` uses), sends

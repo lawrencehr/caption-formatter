@@ -81,7 +81,7 @@ function annotateCaptions(captions, maxChars = 60) {
 function buildGeminiPrompt(captions, opts = {}) {
   const maxChars = opts.maxChars || 60;
   const lineLevel = opts.lineLevel !== false;
-  return `You are an expert caption editor for ABC Media Watch social media videos.
+  return `You are an expert caption editor for broadcast news social media videos.
 You will receive audio and a list of captions that have been auto-formatted from a Premiere Pro export.
 
 Your job: review the captions against what is actually said in the audio, and suggest improvements where caption breaks fall in awkward places.
@@ -285,7 +285,7 @@ function filterOversizedSuggestions(suggestions, captions) {
 // Suggestions are grouped into chains via the symmetric closure of
 // linked_suggestions; an invalid chain is dropped whole.
 
-// Mirrors splitLines() in frontend/ABC_Caption_Formatter_v3.html — used to test
+// Mirrors splitLines() in frontend/caption_formatter.html — used to test
 // whether a suggested text can actually render as ≤2 lines of ≤30 chars.
 const SPLIT_BREAK_RE = /(?<!\d),(?!\s*\d)|[;:]|[—–]/g;
 function splitLinesForCheck(text) {

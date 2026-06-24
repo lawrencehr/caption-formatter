@@ -1,6 +1,6 @@
-# ABC Caption Proxy Server
+# Caption Formatter Proxy Server
 
-Node.js/Express proxy for ABC Caption Formatter that handles API calls to Anthropic Claude, Google Gemini, and the WhisperX alignment server.
+Node.js/Express proxy for Caption Formatter that handles API calls to Anthropic Claude, Google Gemini, and the WhisperX alignment server.
 
 ## Endpoints
 
@@ -19,7 +19,7 @@ Create these in Render's environment settings:
 SHARED_SECRET=<shared-secret-token>
 ANTHROPIC_API_KEY=<your-api-key>
 GEMINI_API_KEY=<your-api-key>
-WHISPERX_URL=<https://whisperx-abc.example.com>
+WHISPERX_URL=<https://whisperx-captions.example.com>
 ```
 
 ### Setup

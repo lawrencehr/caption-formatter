@@ -1,4 +1,4 @@
-# ABC Caption Formatter v3 — Project Summary
+# Caption Formatter v3 — Project Summary
 
 **Completion Date:** April 29, 2026  
 **Status:** ✅ Implementation Complete — Ready for Deployment & Testing
@@ -7,7 +7,7 @@
 
 ## What Was Built
 
-A complete Stage 2 implementation that adds AI-powered caption refinement to the existing ABC Caption Formatter tool. The system uses Gemini 1.5 Flash for intelligent caption suggestions and WhisperX for accurate force-alignment of audio to the refined captions.
+A complete Stage 2 implementation that adds AI-powered caption refinement to the existing Caption Formatter tool. The system uses Gemini 1.5 Flash for intelligent caption suggestions and WhisperX for accurate force-alignment of audio to the refined captions.
 
 ### Architecture
 
@@ -36,11 +36,11 @@ Three-Component System
 ### Folder Structure
 
 ```
-abc-captions/
+caption-formatter/
 │
 ├── frontend/
-│   ├── ABC_Caption_Formatter_v3.html         (Updated with Stage 2 UI)
-│   └── ABC_Caption_Formatter_v3_DOCUMENTATION.md
+│   ├── caption_formatter.html         (Updated with Stage 2 UI)
+│   └── caption_formatter_DOCUMENTATION.md
 │
 ├── backend/
 │   ├── server.js                             (Extended with /api/refine endpoint)
@@ -64,7 +64,7 @@ abc-captions/
 
 | File | Purpose | Key Additions |
 |------|---------|-----------------|
-| `frontend/ABC_Caption_Formatter_v3.html` | Main tool (240KB) | Stage 2 UI, state management, audio drop, diff view, accept/reject logic |
+| `frontend/caption_formatter.html` | Main tool (240KB) | Stage 2 UI, state management, audio drop, diff view, accept/reject logic |
 | `backend/server.js` | Express proxy (14KB) | `/api/refine` endpoint, Gemini orchestration, WhisperX calling, merge logic |
 | `whisperx-server/server.py` | FastAPI server (12KB) | POST /align endpoint, WhisperX invocation, word-level timestamp extraction |
 | `whisperx-server/start.bat` | Windows launcher (2KB) | Auto-creates venv, installs dependencies, starts server on port 8765 |
@@ -231,7 +231,7 @@ Returns: {status, captions, stages, error}
 - [ ] Verify health check works
 
 ### Phase 4: Configure Frontend
-- [ ] Edit `frontend/ABC_Caption_Formatter_v3.html`
+- [ ] Edit `frontend/caption_formatter.html`
 - [ ] Lines 316-317: Set API_BASE_URL and API_SECRET
 - [ ] Test end-to-end workflow
 
@@ -254,7 +254,7 @@ Returns: {status, captions, stages, error}
 | **IMPLEMENTATION_NOTES.md** | Developers / Maintainers | Technical details, testing, tuning |
 | **whisperx-server/README.md** | Windows user | WhisperX + Cloudflare setup |
 | **backend/README.md** | Node.js developer | API endpoints, deployment to Render |
-| **frontend/ABC_Caption_Formatter_v3_DOCUMENTATION.md** | End user | How to use the tool (Stage 1 + 2) |
+| **frontend/caption_formatter_DOCUMENTATION.md** | End user | How to use the tool (Stage 1 + 2) |
 | **STAGE_2_DESIGN.md** | Architects | Original design, requirements, rationale |
 
 ---

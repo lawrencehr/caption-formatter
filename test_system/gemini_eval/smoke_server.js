@@ -9,7 +9,7 @@ const RESULTS_DIR = path.join(__dirname, 'results');
 
 async function main() {
   const stage1 = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, 'ep16_stage1.json'), 'utf8'));
-  const audioPath = process.env.TEST_AUDIO || 'C:/Users/Lawre/OneDrive/Documents/abc-captions/Test files/ep16/ep16_audio.mp3';
+  const audioPath = process.env.TEST_AUDIO || path.join(ROOT, 'Test files', 'ep16', 'ep16_audio.mp3');
 
   const server = spawn(process.execPath, [path.join(ROOT, 'backend', 'server.js')], {
     env: { ...process.env, SHARED_SECRET: 'smoke-test', PORT: '3199' },

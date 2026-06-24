@@ -3,8 +3,8 @@
 const { validateSuggestionChains, filterOversizedSuggestions } = require('../../backend/lib/gemini');
 
 const captions = [
-  { index: 1, text: 'PAUL BARRY: Hello and welcome to the program', italic: false },
-  { index: 2, text: 'to Media Watch this week with much more', italic: false },
+  { index: 1, text: 'ALEX REED: Hello and welcome to the program', italic: false },
+  { index: 2, text: 'to Prime Time this week with much more', italic: false },
   { index: 3, text: 'a fine quote from somebody', italic: true },
   { index: 4, text: 'and back to the host narration again here', italic: false },
 ];
@@ -18,7 +18,7 @@ function expect(name, cond) {
 // 1. Valid multiline suggestion passes
 {
   const r = validateSuggestionChains([
-    { caption_index: 2, new_text: 'to Media Watch this week\nwith much more', change_type: 'phrase_break', linked_suggestions: [] },
+    { caption_index: 2, new_text: 'to Prime Time this week\nwith much more', change_type: 'phrase_break', linked_suggestions: [] },
   ], captions);
   expect('valid multiline kept', r.kept.length === 1 && r.droppedChains.length === 0);
 }
@@ -26,7 +26,7 @@ function expect(name, cond) {
 // 2. Multiline with a >30-char line is dropped (text conserved, so the line check fires)
 {
   const r = validateSuggestionChains([
-    { caption_index: 2, new_text: 'to Media Watch this week with much\nmore', change_type: 'phrase_break', linked_suggestions: [] },
+    { caption_index: 2, new_text: 'to Prime Time this week with much\nmore', change_type: 'phrase_break', linked_suggestions: [] },
   ], captions);
   expect('34-char line dropped', r.kept.length === 0 && /over 30 chars/.test(r.droppedChains[0].reason));
 }
@@ -34,7 +34,7 @@ function expect(name, cond) {
 // 3. Three spoken lines dropped
 {
   const r = validateSuggestionChains([
-    { caption_index: 2, new_text: 'to Media\nWatch this\nweek with much more', change_type: 'phrase_break', linked_suggestions: [] },
+    { caption_index: 2, new_text: 'to Prime\nTime this\nweek with much more', change_type: 'phrase_break', linked_suggestions: [] },
   ], captions);
   expect('3 lines dropped', r.kept.length === 0);
 }
@@ -42,23 +42,23 @@ function expect(name, cond) {
 // 4. Name-tag caption: tag alone on line 1 OK; tag missing → dropped
 {
   const ok = validateSuggestionChains([
-    { caption_index: 1, new_text: 'PAUL BARRY:\nHello and welcome', change_type: 'phrase_break', linked_suggestions: [2] },
-    { caption_index: 2, new_text: 'to the program\nto Media Watch this week', change_type: 'phrase_break', linked_suggestions: [1] },
+    { caption_index: 1, new_text: 'ALEX REED:\nHello and welcome', change_type: 'phrase_break', linked_suggestions: [2] },
+    { caption_index: 2, new_text: 'to the program\nto Prime Time this week', change_type: 'phrase_break', linked_suggestions: [1] },
   ], JSON.parse(JSON.stringify(captions)));
-  // chain conservation: caption1 "PAUL BARRY: Hello and welcome to the program" + caption2 — tokens must match
-  // orig: "PAUL BARRY: Hello and welcome to the program to Media Watch this week with much more"
-  // new : "PAUL BARRY: Hello and welcome" + "to the program to Media Watch this week" — LOSES "with much more" → dropped for conservation
+  // chain conservation: caption1 "ALEX REED: Hello and welcome to the program" + caption2 — tokens must match
+  // orig: "ALEX REED: Hello and welcome to the program to Prime Time this week with much more"
+  // new : "ALEX REED: Hello and welcome" + "to the program to Prime Time this week" — LOSES "with much more" → dropped for conservation
   expect('incomplete chain dropped (conservation)', ok.kept.length === 0 && /not conserved/.test(ok.droppedChains[0].reason));
 
   const ok2 = validateSuggestionChains([
-    { caption_index: 1, new_text: 'PAUL BARRY:\nHello and welcome', change_type: 'phrase_break', linked_suggestions: [2] },
-    { caption_index: 2, new_text: 'to the program to Media\nWatch this week with much more', change_type: 'phrase_break', linked_suggestions: [1] },
+    { caption_index: 1, new_text: 'ALEX REED:\nHello and welcome', change_type: 'phrase_break', linked_suggestions: [2] },
+    { caption_index: 2, new_text: 'to the program to Prime\nTime this week with much more', change_type: 'phrase_break', linked_suggestions: [1] },
   ], JSON.parse(JSON.stringify(captions)));
   expect('valid name-tag chain kept', ok2.kept.length === 2);
 
   // Tag conserved but NOT alone on line 1 (spoken text shares the line) → name-tag check fires
   const bad = validateSuggestionChains([
-    { caption_index: 1, new_text: 'PAUL BARRY: Hello and welcome\nto the program', change_type: 'phrase_break', linked_suggestions: [] },
+    { caption_index: 1, new_text: 'ALEX REED: Hello and welcome\nto the program', change_type: 'phrase_break', linked_suggestions: [] },
   ], JSON.parse(JSON.stringify(captions)));
   expect('tag not alone on line 1 dropped', bad.kept.length === 0 && /name tag/.test(bad.droppedChains[0].reason));
 }
@@ -83,7 +83,7 @@ function expect(name, cond) {
 // 7. Self-links stripped on kept suggestions
 {
   const r = validateSuggestionChains([
-    { caption_index: 2, new_text: 'to Media Watch this week\nwith much more', change_type: 'phrase_break', linked_suggestions: [2] },
+    { caption_index: 2, new_text: 'to Prime Time this week\nwith much more', change_type: 'phrase_break', linked_suggestions: [2] },
   ], captions);
   expect('self-link stripped', r.kept.length === 1 && r.kept[0].linked_suggestions.length === 0);
 }
@@ -104,7 +104,7 @@ function expect(name, cond) {
 // 9. Multiline name-tag in filter: tag line exempt from 30
 {
   const r = filterOversizedSuggestions([
-    { caption_index: 1, new_text: 'PAUL BARRY:\n' + 'd'.repeat(30), change_type: 'phrase_break', linked_suggestions: [] },
+    { caption_index: 1, new_text: 'ALEX REED:\n' + 'd'.repeat(30), change_type: 'phrase_break', linked_suggestions: [] },
   ], captions);
   expect('tag + 30-char spoken line passes filter', r.kept.length === 1);
 }

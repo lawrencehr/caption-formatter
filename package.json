@@ -1,7 +1,7 @@
 {
-  "name": "abc-caption-proxy",
+  "name": "caption-formatter-proxy",
   "version": "1.0.0",
-  "description": "Proxy server for ABC Caption Formatter",
+  "description": "Proxy server for Caption Formatter",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

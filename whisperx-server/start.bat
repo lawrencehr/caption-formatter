@@ -12,11 +12,12 @@ echo ============================================
 echo.
 
 REM ── 1. Find Python ───────────────────────────────────────────────────────────
-set "PYTHON=C:\Users\Lawre\AppData\Local\Programs\Python\Python312\python.exe"
+set "PYTHON="
+for /f "delims=" %%p in ('where python 2^>nul') do if not defined PYTHON set "PYTHON=%%p"
 
-if not exist "!PYTHON!" (
-    echo ERROR: Python not found at !PYTHON!
-    echo Please install Python 3.12 or check the path.
+if not defined PYTHON (
+    echo ERROR: Python not found on PATH.
+    echo Install Python 3.12 from https://www.python.org/downloads/ ^(tick "Add to PATH"^) and re-run.
     pause & exit /b 1
 )
 

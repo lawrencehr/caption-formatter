@@ -1,4 +1,4 @@
-# ABC Caption Formatter v3 — Implementation Notes
+# Caption Formatter v3 — Implementation Notes
 
 **Status:** Stage 2 implementation complete. Ready for deployment and testing.
 
@@ -27,7 +27,7 @@ cd whisperx-server
 cp .env.example .env
 
 # Edit .env and set SHARED_SECRET (matching backend)
-# e.g., SHARED_SECRET=abc-captions-2024-dev
+# e.g., SHARED_SECRET=caption-formatter-2024-dev
 
 # Install Python 3.10+, then run:
 pip install -r requirements.txt
@@ -47,12 +47,12 @@ Follow `whisperx-server/README.md` for full instructions. TL;DR:
 ```bash
 winget install --id Cloudflare.cloudflared
 cloudflared tunnel login
-cloudflared tunnel create whisperx-abc
+cloudflared tunnel create whisperx-captions
 # Edit ~/.cloudflared/config.yml with tunnel details
 cloudflared service install  # Auto-start on reboot
 ```
 
-Save the public URL (e.g., `https://whisperx-abc.example.com`).
+Save the public URL (e.g., `https://whisperx-captions.example.com`).
 
 ### Step 3: Deploy Backend Proxy
 
@@ -65,19 +65,19 @@ git push render main  # or your deployment method
 
 Set environment variables on Render:
 ```
-SHARED_SECRET=abc-captions-2024-dev  # Must match WhisperX .env
+SHARED_SECRET=caption-formatter-2024-dev  # Must match WhisperX .env
 ANTHROPIC_API_KEY=sk-...
 GEMINI_API_KEY=...
-WHISPERX_URL=https://whisperx-abc.example.com  # From Cloudflare Tunnel
+WHISPERX_URL=https://whisperx-captions.example.com  # From Cloudflare Tunnel
 ```
 
 ### Step 4: Update Frontend Configuration
 
-Edit `frontend/ABC_Caption_Formatter_v3.html` lines 316-317:
+Edit `frontend/caption_formatter.html` lines 316-317:
 
 ```javascript
 const API_BASE_URL = 'https://<your-render-service>.onrender.com';
-const API_SECRET = 'abc-captions-2024-dev';  // Must match SHARED_SECRET
+const API_SECRET = 'caption-formatter-2024-dev';  // Must match SHARED_SECRET
 ```
 
 Then serve the HTML file (you can open it locally or host on a CDN).
@@ -132,7 +132,7 @@ If WhisperX server is down, Stage 2 still works:
 
 ### Manual Test (End-to-End)
 
-1. Open `frontend/ABC_Caption_Formatter_v3.html` in browser
+1. Open `frontend/caption_formatter.html` in browser
 2. Upload SRT + .docx transcript (Stage 1 — unchanged)
 3. Click "Format captions"
 4. After Stage 1 completes, Stage 2 section appears
@@ -162,7 +162,7 @@ If WhisperX server is down, Stage 2 still works:
 
 ## Configuration
 
-### Browser Tool (`ABC_Caption_Formatter_v3.html`)
+### Browser Tool (`caption_formatter.html`)
 
 Lines 316-317: Set API endpoints
 ```javascript
@@ -244,10 +244,10 @@ If timing is way off (>500ms), check:
 ## File Structure
 
 ```
-abc-captions/
+caption-formatter/
 ├── frontend/
-│   ├── ABC_Caption_Formatter_v3.html     (Main tool, includes Stage 2)
-│   └── ABC_Caption_Formatter_v3_DOCUMENTATION.md
+│   ├── caption_formatter.html     (Main tool, includes Stage 2)
+│   └── caption_formatter_DOCUMENTATION.md
 ├── backend/
 │   ├── server.js                         (Express proxy with /api/refine)
 │   ├── package.json                      (Include express-fileupload)
@@ -303,7 +303,7 @@ cd backend
 npm update
 
 # Update frontend HTML tool
-# Just re-serve the updated ABC_Caption_Formatter_v3.html
+# Just re-serve the updated caption_formatter.html
 ```
 
 ### Downtime
@@ -349,7 +349,7 @@ Render proxy going offline:
 - **Cloudflare Tunnel:** See `whisperx-server/README.md` "Cloudflare Tunnel Setup"
 - **API endpoints:** See `backend/README.md`
 - **Stage 2 design:** See `STAGE_2_DESIGN.md`
-- **Original tool:** See `frontend/ABC_Caption_Formatter_v3_DOCUMENTATION.md`
+- **Original tool:** See `frontend/caption_formatter_DOCUMENTATION.md`
 
 ---
 

@@ -1,4 +1,4 @@
-// Node port of the Stage 1 pipeline from frontend/ABC_Caption_Formatter_v3.html.
+// Node port of the Stage 1 pipeline from frontend/caption_formatter.html.
 // Functions are copied verbatim where possible; parseTranscript is re-implemented
 // with a small HTML tokenizer because Node has no DOMParser (mammoth emits a
 // constrained HTML subset — p/h1-6/li/table blocks, strong/em/a/br inline —

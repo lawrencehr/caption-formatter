@@ -1,9 +1,9 @@
 @echo off
-title ABC Caption Proxy Server
+title Caption Formatter Proxy Server
 color 0b
 
 echo ===========================================
-echo   ABC Caption Proxy Server (Local Setup)
+echo   Caption Formatter Proxy Server (Local Setup)
 echo ===========================================
 echo.
 

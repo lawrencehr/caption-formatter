@@ -15,6 +15,12 @@ frontend/config.js
 # Runtime
 backend/temp/
 test_system/gemini_eval/results/
+test_system/test_output.json
+*.log
+
+# Editor
+.vscode/
+.idea/
 
 # OS
 .DS_Store

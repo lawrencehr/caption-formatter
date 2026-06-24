@@ -139,7 +139,7 @@ This opens your browser. Click **Authorize** to grant permission. (You don't nee
 #### 3. Create a Tunnel
 
 ```bash
-cloudflared tunnel create whisperx-abc
+cloudflared tunnel create whisperx-captions
 ```
 
 This returns:
@@ -159,7 +159,7 @@ Edit (or create) `C:\Users\<username>\.cloudflared\config.yml`:
 tunnel: <paste-UUID-from-step-3>
 credentials-file: C:\Users\<username>\.cloudflared\<UUID>.json
 ingress:
-  - hostname: whisperx-abc.example.com
+  - hostname: whisperx-captions.example.com
     service: http://localhost:8765
   - service: http_status:404
 ```
@@ -175,7 +175,7 @@ ingress:
 #### 5. Run the Tunnel
 
 ```bash
-cloudflared tunnel run whisperx-abc
+cloudflared tunnel run whisperx-captions
 ```
 
 This stays in the foreground. You should see:
@@ -185,7 +185,7 @@ Route added | subdomain | example.com -> http://localhost:8765
 
 Open a new terminal and test:
 ```bash
-curl https://whisperx-abc.example.com/health
+curl https://whisperx-captions.example.com/health
 ```
 
 Expected response:
@@ -217,7 +217,7 @@ Now Cloudflare Tunnel auto-starts when Windows boots.
 3. Trigger: "At startup"
 4. Action: Start Program
    - Program: `C:\Users\<username>\AppData\Local\Cloudflare\cloudflared.exe`
-   - Arguments: `tunnel run whisperx-abc`
+   - Arguments: `tunnel run whisperx-captions`
 5. Click OK
 
 ## Troubleshooting
@@ -243,8 +243,8 @@ Now Cloudflare Tunnel auto-starts when Windows boots.
 **Error: "PERMISSION DENIED" / "unable to login"**
 - Run cloudflared commands in an **Admin PowerShell** window
 
-**Can't reach https://whisperx-abc.example.com**
-- Make sure the tunnel is running: `cloudflared tunnel run whisperx-abc`
+**Can't reach https://whisperx-captions.example.com**
+- Make sure the tunnel is running: `cloudflared tunnel run whisperx-captions`
 - Test the local endpoint first: `curl http://localhost:8765/health`
 
 ### WhisperX processing slow
@@ -293,7 +293,7 @@ curl -X POST http://localhost:8765/align \
 
 ### Test via Tunnel:
 ```bash
-curl https://whisperx-abc.example.com/health
+curl https://whisperx-captions.example.com/health
 ```
 
 ## Logs
@@ -328,7 +328,7 @@ net start cloudflared
 
 # Or force-kill and restart:
 taskkill /IM cloudflared.exe /F
-cloudflared tunnel run whisperx-abc
+cloudflared tunnel run whisperx-captions
 ```
 
 ## File Structure
