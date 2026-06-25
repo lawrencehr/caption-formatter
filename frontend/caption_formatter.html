@@ -7060,6 +7060,9 @@ function initEasterEgg() {
 }
 
 function showEasterEgg() {
+  // Easter egg disabled (e.g. for demos). Flip to true to re-enable.
+  const EASTER_EGG_ENABLED = false;
+  if (!EASTER_EGG_ENABLED) return;
   const el = document.getElementById('easter-egg');
   if (!el) return;
   // Clear any stale intervals from a previous showing
