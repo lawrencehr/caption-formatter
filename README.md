@@ -2,6 +2,8 @@
 
 A caption-refinement tool for short-form, broadcast-news social media videos. It turns a raw Premiere Pro subtitle export into clean, broadcast-style captions — correctly italicised, sensibly line-broken, and (optionally) re-timed to the audio at millisecond accuracy.
 
+![The Caption Formatter console — drop a Premiere SRT and a transcript to begin](docs/screenshots/01-hero.png)
+
 The project is built in two stages so the everyday workflow needs **no backend at all**:
 
 - **Stage 1 — Format (browser-only).** Open one HTML file in a browser. It reformats a raw Premiere `.srt` export and uses a Google Doc transcript (`.docx`) to detect which segments should be italic. No server, no build step, no internet required.
@@ -15,6 +17,18 @@ The project is built in two stages so the everyday workflow needs **no backend a
 - **Constraint-driven formatting.** Captions must obey hard broadcast rules: ≤30 characters per line (Premiere force-wraps at 30 and silently hides overflow), a speaker name-tag alone on its own line, a minimum on-screen duration, and no overlapping cues. These are enforced end-to-end.
 - **The model is kept on a tight leash.** The LLM is only allowed to *move caption boundaries* — never to change a single word. A server-side chain validator drops any suggestion that loses or duplicates words, crosses an italic boundary, or breaks the 30-character line rule.
 - **Two-phase pipeline with a real fallback path,** plus keep-alive handling to survive a serverless host's idle timeout during long model calls.
+
+---
+
+## Screenshots
+
+**Stage 1 — Review.** Drop a Premiere `.srt` and a `.docx` transcript; the tool reformats the captions and italicises the segments that were quoted (bold) in the transcript. Each cue shows its timing, line-wrapping, and an `italic` flag, with a per-caption inspector on the right.
+
+![Stage 1 review screen showing formatted captions with detected italics](docs/screenshots/02-review.png)
+
+**Export.** A live SRT preview, an auto-generated Premiere checklist, and one-click download. (The screens above use the fictional sample files in [`samples/`](samples) — no real footage.)
+
+![Export screen with live SRT preview and Premiere checklist](docs/screenshots/03-export.png)
 
 ---
 
@@ -76,6 +90,8 @@ test_system/
 ### Stage 1 (no setup)
 
 Open `frontend/caption_formatter.html` in a browser. Drop in a Premiere `.srt` export and the matching `.docx` transcript, then export reformatted captions.
+
+> Want to try it immediately? Use the fictional sample files in [`samples/`](samples) — `mock_subtitles.srt` + `mock_transcript.docx`.
 
 ### Stage 2 (optional — adds AI refine + re-timing)
 
